@@ -15,10 +15,12 @@
 */
 
 #pragma once
+#include <xyz/openbmc_project/Common/UUID/server.hpp>
 #include "xyz/openbmc_project/Chassis/Common/error.hpp"
 #include "xyz/openbmc_project/Chassis/Control/Chassis/server.hpp"
 #include <phosphor-logging/elog-errors.hpp>
 #include <systemd/sd-event.h>
+#include <systemd/sd-id128.h>
 
 const static constexpr char *POWER_BUTTON_PATH =
     "/xyz/openbmc_project/Chassis/Buttons/Power0";
@@ -28,6 +30,8 @@ const static constexpr char *RESET_BUTTON_PATH =
     "/xyz/openbmc_project/Chassis/Buttons/Reset0";
 const static constexpr char *RESET_BUTTON_INTF =
     "xyz.openbmc_project.Chassis.Buttons.Reset";
+const static constexpr char *DEVICE_UUID_PATH =
+    "/xyz/openbmc_project/inventory/system/chassis/motherboard/bmc";
 
 const static uint8_t POWER_OFF = 0;
 const static uint8_t POWER_ON = 1;
@@ -43,11 +47,16 @@ struct EventDeleter
 using EventPtr = std::unique_ptr<sd_event, EventDeleter>;
 
 struct ChassisControl
-    : sdbusplus::server::object_t<
+    : sdbusplus::server::object::object<
+          sdbusplus::xyz::openbmc_project::Common::server::UUID>,
+      sdbusplus::server::object_t<
           sdbusplus::xyz::openbmc_project::Chassis::Control::server::Chassis>
 {
     ChassisControl(sdbusplus::bus::bus &bus, const char *path,
                    EventPtr &event) :
+        sdbusplus::server::object::object<
+            sdbusplus::xyz::openbmc_project::Common::server::UUID>(
+            bus, DEVICE_UUID_PATH),
         sdbusplus::server::object_t<
             sdbusplus::xyz::openbmc_project::Chassis::Control::server::Chassis>(
             bus, path),
@@ -90,8 +99,34 @@ struct ChassisControl
                 return;
             })
     {
+        sd_id128_t id = SD_ID128_NULL;
+        int r = 0;
+        char s[SD_ID128_STRING_MAX] = "";
+
+/*
+ * Follow the example in API manual to
+ * generate this ID using command "journalctl --new-id128"
+ * https://www.freedesktop.org/software/systemd/man/sd_id128_get_machine.html
+ *
+ */
+#define MESSAGE_APPID                                                          \
+    SD_ID128_MAKE(e0, e1, 73, 76, 64, 61, 47, da, a5, 0c, d0, cc, 64, 12, 45,  \
+                  78)
+
+        r = sd_id128_get_machine_app_specific(MESSAGE_APPID, &id);
+        if (r < 0)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Error in sd_id128 call");
+            return;
+        }
+
+        sd_id128_to_string(id, s);
+        uUID(std::string(s));
+
         phosphor::logging::log<phosphor::logging::level::DEBUG>(
-            "ChassisControl is created.");
+            "ChassisControl is created.",
+            phosphor::logging::entry("UUID=%s", s));
     }
 
     int32_t powerOn() override;
@@ -101,6 +136,7 @@ struct ChassisControl
     int32_t softReboot() override;
     int32_t quiesce() override;
     int32_t getPowerState() override;
+    std::string uUID(std::string value) override;
 
   private:
     int32_t startSystemdUnit(const std::string &unit);
