@@ -15,6 +15,8 @@
 */
 
 #pragma once
+#include <fcntl.h>
+#include <linux/aspeed-lpc-sio.h>
 #include <unistd.h>
 #include <phosphor-logging/elog-errors.hpp>
 #include <xyz/openbmc_project/Chassis/Common/error.hpp>
@@ -26,6 +28,7 @@
 
 static constexpr size_t POLLING_INTERVAL_MS = 500;
 
+const static constexpr char* LPC_SIO_DEVPATH = "/dev/lpc-sio";
 const static constexpr char* PGOOD_PIN = "PGOOD";
 const static constexpr char* POWER_UP_PIN = "POWER_UP_PIN";
 
@@ -89,7 +92,32 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
 
     void timeOutHandler()
     {
-        // TODO polling acpi status
+        int fd = -1;
+        struct sio_ioctl_data sio_data;
+
+        fd = ::open(LPC_SIO_DEVPATH, O_RDWR);
+        if (fd < 0)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Open LPC-SIO error!");
+            return;
+        }
+
+        sio_data.sio_cmd = SIO_GET_ACPI_STATE;
+        sio_data.param = 0;
+        if (::ioctl(fd, SIO_IOC_COMMAND, &sio_data) == 0)
+        {
+            s4s5State(sio_data.data);
+        }
+        else
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ioctl LPC-SIO error!");
+            ::close(fd);
+            return;
+        }
+
+        ::close(fd);
 
         this->timer.start(std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::milliseconds(POLLING_INTERVAL_MS)));
