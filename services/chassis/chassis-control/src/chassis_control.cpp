@@ -110,3 +110,8 @@ int32_t ChassisControl::getPowerState()
 
     return state;
 }
+
+std::string ChassisControl::uUID(std::string value)
+{
+    return sdbusplus::xyz::openbmc_project::Common::server::UUID::uUID(value);
+}
