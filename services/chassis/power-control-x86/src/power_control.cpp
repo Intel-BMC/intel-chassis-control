@@ -28,14 +28,66 @@ int32_t PowerControl::forcePowerOff()
     return ret;
 }
 
+int32_t PowerControl::triggerReset()
+{
+    int ret = 0;
+    int count = 0;
+    char buf = '0';
+
+    phosphor::logging::log<phosphor::logging::level::DEBUG>("triggerReset");
+
+    ret = ::lseek(reset_out_fd, 0, SEEK_SET);
+    if (ret < 0)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>("lseek error!");
+        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
+            IOError();
+    }
+
+    buf = '0';
+    ret = ::write(reset_out_fd, &buf, sizeof(buf));
+    if (ret < 0)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>("write error!");
+        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
+            IOError();
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(RESET_PULSE_TIME_MS));
+
+    buf = '1';
+    ret = ::write(reset_out_fd, &buf, sizeof(buf));
+    if (ret < 0)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>("write error!");
+        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
+            IOError();
+    }
+    return 0;
+}
+
 int32_t PowerControl::setPowerState(int32_t newState)
 {
     int ret = 0;
     int count = 0;
     char buf = '0';
 
+    if (newState < 0 || newState >= powerStateMax)
+    {
+        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
+            InvalidParameter();
+    }
+
     phosphor::logging::log<phosphor::logging::level::DEBUG>(
         "setPowerState", phosphor::logging::entry("NEWSTATE=%d", newState));
+
+    if (powerStateReset == newState)
+    {
+        phosphor::logging::log<phosphor::logging::level::DEBUG>(
+            "setPowerState system reset");
+        triggerReset();
+        return 0;
+    }
 
     if (state() == newState)
     {
@@ -64,7 +116,7 @@ int32_t PowerControl::setPowerState(int32_t newState)
             IOError();
     }
 
-    if (1 == newState)
+    if (powerStateOn == newState)
     {
         phosphor::logging::log<phosphor::logging::level::DEBUG>(
             "setPowerState power on");

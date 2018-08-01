@@ -31,14 +31,21 @@ static constexpr size_t POLLING_INTERVAL_MS = 500;
 const static constexpr char* LPC_SIO_DEVPATH = "/dev/lpc-sio";
 const static constexpr char* PGOOD_PIN = "PGOOD";
 const static constexpr char* POWER_UP_PIN = "POWER_UP_PIN";
+const static constexpr char* RESET_OUT_PIN = "RESET_OUT";
 
 const static constexpr size_t PCH_DEVICE_BUS_ADDRESS = 3;
 const static constexpr size_t PCH_DEVICE_SLAVE_ADDRESS = 0x44;
 const static constexpr size_t PCH_CMD_REGISTER = 0;
 const static constexpr size_t PCH_POWER_DOWN_CMD = 0x02;
 
+const static constexpr size_t RESET_PULSE_TIME_MS = 500;
 const static constexpr size_t POWER_ON_PULSE_TIME_MS = 200;
 const static constexpr size_t POWER_OFF_PULSE_TIME_MS = 4000;
+
+const static constexpr uint8_t powerStateOff = 0;
+const static constexpr uint8_t powerStateOn = 1;
+const static constexpr uint8_t powerStateReset = 2;
+const static constexpr uint8_t powerStateMax = 3;
 
 using pwr_control =
     sdbusplus::xyz::openbmc_project::Chassis::Control::server::Power;
@@ -56,15 +63,23 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
         char buf = '0';
 
         // config gpio
+        ret = configGpio(RESET_OUT_PIN, &reset_out_fd, bus);
+        if (ret < 0)
+        {
+            throw std::runtime_error("failed to config RESET_OUT_PIN");
+        }
+
         ret = configGpio(PGOOD_PIN, &pgood_fd, bus);
         if (ret < 0)
         {
+            closeGpio(reset_out_fd);
             throw std::runtime_error("failed to config PGOOD_PIN");
         }
 
         ret = configGpio(POWER_UP_PIN, &power_up_fd, bus);
         if (ret < 0)
         {
+            closeGpio(reset_out_fd);
             closeGpio(pgood_fd);
             throw std::runtime_error("failed to config POWER_UP_PIN");
         }
@@ -73,6 +88,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
                               callbackHandler, this);
         if (ret < 0)
         {
+            closeGpio(reset_out_fd);
             closeGpio(pgood_fd);
             closeGpio(power_up_fd);
             throw std::runtime_error("failed to add to event loop");
@@ -86,6 +102,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
 
     ~PowerControl()
     {
+        closeGpio(reset_out_fd);
         closeGpio(pgood_fd);
         closeGpio(power_up_fd);
     }
@@ -201,9 +218,11 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
     int32_t getPowerState() override;
 
   private:
+    int reset_out_fd;
     int power_up_fd;
     int pgood_fd;
     phosphor::watchdog::Timer timer;
     sdbusplus::bus::bus& bus;
     sd_event_io_handler_t callbackHandler;
+    int32_t triggerReset();
 };
