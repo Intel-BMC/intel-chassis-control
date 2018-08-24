@@ -16,8 +16,8 @@
 
 #include "id_button.hpp"
 
-bool IDButton::simPress()
+void IDButton::simPress()
 {
     pressed();
-    return true;
+    return;
 }

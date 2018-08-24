@@ -16,19 +16,14 @@
 
 #include "power_button.hpp"
 
-bool PowerButton::simPress()
+void PowerButton::simPress()
 {
-    uint64_t currentTimeMs =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count();
-    pressedTime(currentTimeMs);
     pressed();
-    return true;
+    return;
 }
 
-bool PowerButton::simLongPress()
+void PowerButton::simLongPress()
 {
     pressedLong();
-    return true;
+    return;
 }

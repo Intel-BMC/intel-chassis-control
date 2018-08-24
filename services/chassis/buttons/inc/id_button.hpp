@@ -63,7 +63,7 @@ struct IDButton
     {
         ::closeGpio(fd);
     }
-    bool simPress() override;
+    void simPress() override;
     static int EventHandler(sd_event_source *es, int fd, uint32_t revents,
                             void *userdata)
     {

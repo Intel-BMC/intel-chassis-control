@@ -63,8 +63,8 @@ struct PowerButton
     {
         ::closeGpio(fd);
     }
-    bool simPress() override;
-    bool simLongPress() override;
+    void simPress() override;
+    void simLongPress() override;
     static int EventHandler(sd_event_source *es, int fd, uint32_t revents,
                             void *userdata)
     {

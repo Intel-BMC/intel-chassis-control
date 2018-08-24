@@ -74,8 +74,8 @@ int32_t PowerControl::setPowerState(int32_t newState)
 
     if (newState < 0 || newState >= powerStateMax)
     {
-        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
-            InvalidParameter();
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "error! invalid parameter!");
     }
 
     phosphor::logging::log<phosphor::logging::level::DEBUG>(

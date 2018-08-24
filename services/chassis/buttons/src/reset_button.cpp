@@ -16,8 +16,8 @@
 
 #include "reset_button.hpp"
 
-bool ResetButton::simPress()
+void ResetButton::simPress()
 {
     pressed();
-    return true;
+    return;
 }
