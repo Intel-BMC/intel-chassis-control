@@ -124,12 +124,40 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
         sio_data.param = 0;
         if (::ioctl(fd, SIO_IOC_COMMAND, &sio_data) == 0)
         {
-            s4s5State(sio_data.data);
+            if (s4s5State() != sio_data.data)
+            {
+                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                    "ACPI state change\n",
+                    phosphor::logging::entry("OLD=%d", s4s5State()),
+                    phosphor::logging::entry("NEW=%d", sio_data.data));
+                s4s5State(sio_data.data);
+            }
         }
         else
         {
             phosphor::logging::log<phosphor::logging::level::ERR>(
-                "ioctl LPC-SIO error!");
+                "ioctl SIO_GET_ACPI_STATE error!");
+            ::close(fd);
+            return;
+        }
+
+        sio_data.sio_cmd = SIO_GET_PWRGD_STATUS;
+        sio_data.param = 0;
+        if (::ioctl(fd, SIO_IOC_COMMAND, &sio_data) == 0)
+        {
+            if (vrdGood() != sio_data.data)
+            {
+                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                    "VRD_PWR_GOOD change\n",
+                    phosphor::logging::entry("OLD=%d", vrdGood()),
+                    phosphor::logging::entry("NEW=%d", sio_data.data));
+                vrdGood(sio_data.data);
+            }
+        }
+        else
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ioctl SIO_GET_PWRGD_STATUS error!");
             ::close(fd);
             return;
         }
