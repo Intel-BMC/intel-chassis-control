@@ -76,6 +76,7 @@ int32_t PowerControl::setPowerState(int32_t newState)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "error! invalid parameter!");
+        return -1;
     }
 
     phosphor::logging::log<phosphor::logging::level::DEBUG>(
