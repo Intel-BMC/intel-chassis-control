@@ -30,6 +30,7 @@ static constexpr size_t POLLING_INTERVAL_MS = 500;
 
 const static constexpr char* LPC_SIO_DEVPATH = "/dev/lpc-sio";
 const static constexpr char* PGOOD_PIN = "PGOOD";
+const static constexpr char* BIOS_POST_CMPLT_PIN = "BIOS_POST_CMPLT";
 const static constexpr char* POWER_UP_PIN = "POWER_UP_PIN";
 const static constexpr char* RESET_OUT_PIN = "RESET_OUT";
 
@@ -76,11 +77,20 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
             throw std::runtime_error("failed to config PGOOD_PIN");
         }
 
+        ret = configGpio(BIOS_POST_CMPLT_PIN, &bios_post_fd, bus);
+        if (ret < 0)
+        {
+            closeGpio(reset_out_fd);
+            closeGpio(pgood_fd);
+            throw std::runtime_error("failed to config BIOS_POST_CMPLT_PIN");
+        }
+
         ret = configGpio(POWER_UP_PIN, &power_up_fd, bus);
         if (ret < 0)
         {
             closeGpio(reset_out_fd);
             closeGpio(pgood_fd);
+            closeGpio(bios_post_fd);
             throw std::runtime_error("failed to config POWER_UP_PIN");
         }
 
@@ -90,6 +100,18 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
         {
             closeGpio(reset_out_fd);
             closeGpio(pgood_fd);
+            closeGpio(bios_post_fd);
+            closeGpio(power_up_fd);
+            throw std::runtime_error("failed to add to event loop");
+        }
+
+        ret = sd_event_add_io(event.get(), nullptr, bios_post_fd, EPOLLPRI,
+                              callbackHandler, this);
+        if (ret < 0)
+        {
+            closeGpio(reset_out_fd);
+            closeGpio(pgood_fd);
+            closeGpio(bios_post_fd);
             closeGpio(power_up_fd);
             throw std::runtime_error("failed to add to event loop");
         }
@@ -104,6 +126,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
     {
         closeGpio(reset_out_fd);
         closeGpio(pgood_fd);
+        closeGpio(bios_post_fd);
         closeGpio(power_up_fd);
     }
 
@@ -210,31 +233,51 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
             return n;
         }
 
-        if (buf == '0')
+        if (fd == powercontrol->pgood_fd)
         {
-            powercontrol->state(0);
-            powercontrol->pgood(0);
-
-            if (first_event)
+            if (buf == '0')
             {
-                first_event = false;
+                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                "!PSGOOD");
+                powercontrol->state(0);
+                powercontrol->pgood(0);
+                if (first_event)
+                {
+                    first_event = false;
+                }
+                else
+                {
+                    powercontrol->powerLost();
+                }
             }
             else
             {
-                powercontrol->powerLost();
+                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                "PSGOOD");
+                powercontrol->state(1);
+                powercontrol->pgood(1);
+                if (first_event)
+                {
+                    first_event = false;
+                }
+                else
+                {
+                    powercontrol->powerGood();
+                }
             }
         }
-        else
+        else if (fd == powercontrol->bios_post_fd)
         {
-            powercontrol->state(1);
-            powercontrol->pgood(1);
-            if (first_event)
+            // TODO set dbus property and emit signal
+            if (buf == '0')
             {
-                first_event = false;
+                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                "BIOS POST COMPLETED");
             }
             else
             {
-                powercontrol->powerGood();
+                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                "!BIOS POST COMPLETED");
             }
         }
 
@@ -249,6 +292,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
     int reset_out_fd;
     int power_up_fd;
     int pgood_fd;
+    int bios_post_fd;
     phosphor::watchdog::Timer timer;
     sdbusplus::bus::bus& bus;
     sd_event_io_handler_t callbackHandler;
