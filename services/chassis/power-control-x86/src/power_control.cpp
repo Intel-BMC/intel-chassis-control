@@ -117,20 +117,9 @@ int32_t PowerControl::setPowerState(int32_t newState)
             IOError();
     }
 
-    if (powerStateOn == newState)
-    {
-        phosphor::logging::log<phosphor::logging::level::DEBUG>(
-            "setPowerState power on");
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(POWER_ON_PULSE_TIME_MS));
-    }
-    else
-    {
-        phosphor::logging::log<phosphor::logging::level::DEBUG>(
-            "setPowerState power off");
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(POWER_OFF_PULSE_TIME_MS));
-    }
+    phosphor::logging::log<phosphor::logging::level::DEBUG>(
+        "setPowerState power on");
+    std::this_thread::sleep_for(std::chrono::milliseconds(POWER_PULSE_TIME_MS));
 
     buf = '1';
     ret = ::write(power_up_fd, &buf, sizeof(buf));
@@ -149,7 +138,7 @@ int32_t PowerControl::setPowerState(int32_t newState)
          * power off after waitting for a while
          */
         std::this_thread::sleep_for(
-            std::chrono::milliseconds(POWER_OFF_PULSE_TIME_MS));
+            std::chrono::milliseconds(POWER_PULSE_TIME_MS));
         if (1 == pgood())
         { // still on, force off!
             phosphor::logging::log<phosphor::logging::level::DEBUG>(

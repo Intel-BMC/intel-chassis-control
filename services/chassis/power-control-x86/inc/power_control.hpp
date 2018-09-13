@@ -40,8 +40,7 @@ const static constexpr size_t PCH_CMD_REGISTER = 0;
 const static constexpr size_t PCH_POWER_DOWN_CMD = 0x02;
 
 const static constexpr size_t RESET_PULSE_TIME_MS = 500;
-const static constexpr size_t POWER_ON_PULSE_TIME_MS = 200;
-const static constexpr size_t POWER_OFF_PULSE_TIME_MS = 4000;
+const static constexpr size_t POWER_PULSE_TIME_MS = 200;
 
 const static constexpr uint8_t powerStateOff = 0;
 const static constexpr uint8_t powerStateOn = 1;
@@ -238,7 +237,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
             if (buf == '0')
             {
                 phosphor::logging::log<phosphor::logging::level::DEBUG>(
-                "!PSGOOD");
+                    "!PSGOOD");
                 powercontrol->state(0);
                 powercontrol->pgood(0);
                 if (first_event)
@@ -253,7 +252,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
             else
             {
                 phosphor::logging::log<phosphor::logging::level::DEBUG>(
-                "PSGOOD");
+                    "PSGOOD");
                 powercontrol->state(1);
                 powercontrol->pgood(1);
                 if (first_event)
@@ -272,12 +271,12 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
             if (buf == '0')
             {
                 phosphor::logging::log<phosphor::logging::level::DEBUG>(
-                "BIOS POST COMPLETED");
+                    "BIOS POST COMPLETED");
             }
             else
             {
                 phosphor::logging::log<phosphor::logging::level::DEBUG>(
-                "!BIOS POST COMPLETED");
+                    "!BIOS POST COMPLETED");
             }
         }
 
