@@ -41,6 +41,8 @@ pkg_check_modules(DBUSINTERFACE phosphor-dbus-interfaces REQUIRED)
 include_directories(${DBUSINTERFACE_INCLUDE_DIRS})
 link_directories(${DBUSINTERFACE_LIBRARY_DIRS})
 
+include_directories (${Boost_INCLUDE_DIRS})
+
 option (EXTERNAL_PROJECT "Enable Cloning External Projects" OFF)
 if (EXTERNAL_PROJECT)
     include_directories (${CMAKE_CURRENT_SOURCE_DIR}/inc/non-yocto)

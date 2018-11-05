@@ -14,6 +14,25 @@
 // limitations under the License.
 */
 #include "power_control.hpp"
+#include <boost/process/child.hpp>
+
+constexpr const char* passthroughPath = "/usr/bin/set-passthrough.sh";
+
+struct DisablePassthrough
+{
+
+    DisablePassthrough()
+    {
+        // todo: use driver instead of /dev/mem
+        boost::process::child c(passthroughPath, "0");
+        c.wait();
+    }
+    ~DisablePassthrough()
+    {
+        boost::process::child c(passthroughPath, "1");
+        c.wait();
+    }
+};
 
 int32_t PowerControl::forcePowerOff()
 {
@@ -45,6 +64,8 @@ int32_t PowerControl::triggerReset()
     }
 
     buf = '0';
+
+    auto disable = DisablePassthrough();
     ret = ::write(reset_out_fd, &buf, sizeof(buf));
     if (ret < 0)
     {
@@ -109,6 +130,8 @@ int32_t PowerControl::setPowerState(int32_t newState)
     }
 
     buf = '0';
+
+    auto disable = DisablePassthrough();
     ret = ::write(power_up_fd, &buf, sizeof(buf));
     if (ret < 0)
     {
