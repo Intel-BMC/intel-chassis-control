@@ -13,8 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 */
-#include "power_control.hpp"
 #include <boost/process/child.hpp>
+#include "power_control.hpp"
 
 constexpr const char* passthroughPath = "/usr/bin/set-passthrough.sh";
 
