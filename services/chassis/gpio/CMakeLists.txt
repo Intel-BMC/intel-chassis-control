@@ -20,6 +20,8 @@ add_library(${PROJECT_NAME} SHARED src/gpio.cpp)
 set_target_properties(${PROJECT_NAME} PROPERTIES VERSION "0.1.0")
 set_target_properties(${PROJECT_NAME} PROPERTIES SOVERSION "0")
 
+target_link_libraries (${PROJECT_NAME} phosphor_logging)
+
 install(TARGETS ${PROJECT_NAME}
   EXPORT "${PROJECT_NAME}EXPORT"
   RUNTIME DESTINATION "${INSTALL_BIN_DIR}" COMPONENT bin

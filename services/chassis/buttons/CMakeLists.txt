@@ -53,6 +53,6 @@ link_directories(${DBUSINTERFACE_LIBRARY_DIRS})
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
 target_link_libraries(${PROJECT_NAME} ${DBUSINTERFACE_LIBRARIES} chassisgpio)
-target_link_libraries(${PROJECT_NAME} "${SDBUSPLUSPLUS_LIBRARIES} -lstdc++fs")
+target_link_libraries(${PROJECT_NAME} "${SDBUSPLUSPLUS_LIBRARIES} -lstdc++fs" phosphor_logging)
 
 install (TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})
