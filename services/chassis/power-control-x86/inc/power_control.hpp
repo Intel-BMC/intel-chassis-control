@@ -267,16 +267,17 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
         }
         else if (fd == powercontrol->bios_post_fd)
         {
-            // TODO set dbus property and emit signal
             if (buf == '0')
             {
                 phosphor::logging::log<phosphor::logging::level::DEBUG>(
                     "BIOS POST COMPLETED");
+                powercontrol->postComplete(true);
             }
             else
             {
                 phosphor::logging::log<phosphor::logging::level::DEBUG>(
                     "!BIOS POST COMPLETED");
+                powercontrol->postComplete(false);
             }
         }
 
