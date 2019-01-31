@@ -18,6 +18,7 @@
 #include <phosphor-logging/elog-errors.hpp>
 #include <unistd.h>
 #include <xyz/openbmc_project/Common/error.hpp>
+#include <sys/ioctl.h>
 #include "i2c.hpp"
 
 // TODO Add 16-bit I2C support in the furture

@@ -24,6 +24,7 @@
 #include <xyz/openbmc_project/Common/error.hpp>
 #include "gpio.hpp"
 #include "i2c.hpp"
+#include <sys/ioctl.h>
 #include "timer.hpp"
 
 static constexpr size_t POLLING_INTERVAL_MS = 500;
