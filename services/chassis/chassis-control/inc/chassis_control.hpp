@@ -95,7 +95,7 @@ struct ChassisControl
             [this](sdbusplus::message::message &msg) {
                 phosphor::logging::log<phosphor::logging::level::INFO>(
                     "resetButtonPressed callback function is called...");
-                this->reboot();
+                this->softReboot();
                 return;
             })
     {

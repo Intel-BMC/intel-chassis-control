@@ -41,7 +41,7 @@ const static constexpr char *HOST_STATE_REBOOT_TGT =
 const static constexpr char *HOST_STATE_SHUTDOWN_TGT =
     "obmc-host-shutdown@0.target";
 const static constexpr char *HOST_SOFT_REBOOT_TGT =
-    "obmc-host-soft-reboot@0.target";
+    "obmc-host-warm-reset@0.target";
 
 int32_t ChassisControl::startSystemdUnit(const std::string &unit)
 {
