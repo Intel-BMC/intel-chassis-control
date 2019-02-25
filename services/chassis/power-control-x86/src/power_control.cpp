@@ -100,7 +100,7 @@ int32_t PowerControl::setPowerState(int32_t newState)
         return -1;
     }
 
-    phosphor::logging::log<phosphor::logging::level::DEBUG>(
+    phosphor::logging::log<phosphor::logging::level::INFO>(
         "setPowerState", phosphor::logging::entry("NEWSTATE=%d", newState));
 
     if (powerStateReset == newState)

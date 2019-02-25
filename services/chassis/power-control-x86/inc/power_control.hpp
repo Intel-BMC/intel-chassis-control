@@ -30,10 +30,18 @@
 static constexpr size_t POLLING_INTERVAL_MS = 500;
 
 const static constexpr char* LPC_SIO_DEVPATH = "/dev/lpc-sio";
-const static constexpr char* PGOOD_PIN = "PGOOD";
-const static constexpr char* BIOS_POST_CMPLT_PIN = "BIOS_POST_CMPLT";
-const static constexpr char* POWER_UP_PIN = "POWER_UP_PIN";
-const static constexpr char* RESET_OUT_PIN = "RESET_OUT";
+
+const static constexpr int32_t pgoodPinNum = 219;
+const static constexpr char* pgoodPinDirection = "both";
+
+const static constexpr int32_t biosPostCmpltPinNum = 215;
+const static constexpr char* biosPostCmpltPinDirection = "both";
+
+const static constexpr int32_t powerUpPinNum = 35;
+const static constexpr char* powerUpPinDirection = "out";
+
+const static constexpr int32_t resetOutPinNum = 33;
+const static constexpr char* resetOutPinDirection = "out";
 
 const static constexpr size_t PCH_DEVICE_BUS_ADDRESS = 3;
 const static constexpr size_t PCH_DEVICE_SLAVE_ADDRESS = 0x44;
@@ -64,20 +72,22 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
         char buf = '0';
 
         // config gpio
-        ret = configGpio(RESET_OUT_PIN, &reset_out_fd, bus);
+        ret = configGpio(resetOutPinNum, resetOutPinDirection, &reset_out_fd,
+                         bus);
         if (ret < 0)
         {
             throw std::runtime_error("failed to config RESET_OUT_PIN");
         }
 
-        ret = configGpio(PGOOD_PIN, &pgood_fd, bus);
+        ret = configGpio(pgoodPinNum, pgoodPinDirection, &pgood_fd, bus);
         if (ret < 0)
         {
             closeGpio(reset_out_fd);
             throw std::runtime_error("failed to config PGOOD_PIN");
         }
 
-        ret = configGpio(BIOS_POST_CMPLT_PIN, &bios_post_fd, bus);
+        ret = configGpio(biosPostCmpltPinNum, biosPostCmpltPinDirection,
+                         &bios_post_fd, bus);
         if (ret < 0)
         {
             closeGpio(reset_out_fd);
@@ -85,7 +95,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
             throw std::runtime_error("failed to config BIOS_POST_CMPLT_PIN");
         }
 
-        ret = configGpio(POWER_UP_PIN, &power_up_fd, bus);
+        ret = configGpio(powerUpPinNum, powerUpPinDirection, &power_up_fd, bus);
         if (ret < 0)
         {
             closeGpio(reset_out_fd);
@@ -149,7 +159,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
         {
             if (s4s5State() != sio_data.data)
             {
-                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                phosphor::logging::log<phosphor::logging::level::INFO>(
                     "ACPI state change\n",
                     phosphor::logging::entry("OLD=%d", s4s5State()),
                     phosphor::logging::entry("NEW=%d", sio_data.data));
@@ -170,7 +180,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
         {
             if (vrdGood() != sio_data.data)
             {
-                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                phosphor::logging::log<phosphor::logging::level::INFO>(
                     "VRD_PWR_GOOD change\n",
                     phosphor::logging::entry("OLD=%d", vrdGood()),
                     phosphor::logging::entry("NEW=%d", sio_data.data));
@@ -237,7 +247,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
         {
             if (buf == '0')
             {
-                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                phosphor::logging::log<phosphor::logging::level::INFO>(
                     "!PSGOOD");
                 powercontrol->state(0);
                 powercontrol->pgood(0);
@@ -252,7 +262,7 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
             }
             else
             {
-                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                phosphor::logging::log<phosphor::logging::level::INFO>(
                     "PSGOOD");
                 powercontrol->state(1);
                 powercontrol->pgood(1);
@@ -270,13 +280,13 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
         {
             if (buf == '0')
             {
-                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                phosphor::logging::log<phosphor::logging::level::INFO>(
                     "BIOS POST COMPLETED");
                 powercontrol->postComplete(true);
             }
             else
             {
-                phosphor::logging::log<phosphor::logging::level::DEBUG>(
+                phosphor::logging::log<phosphor::logging::level::INFO>(
                     "!BIOS POST COMPLETED");
                 powercontrol->postComplete(false);
             }

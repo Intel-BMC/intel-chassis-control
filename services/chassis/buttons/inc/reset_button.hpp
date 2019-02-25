@@ -22,7 +22,8 @@
 #include "common.hpp"
 #include "gpio.hpp"
 
-const static constexpr char *RESET_BUTTON = "RESET_BUTTON";
+const static constexpr int32_t rstButtonNum = 32;
+const static constexpr char *rstButtonDirection = "both";
 
 struct ResetButton
     : sdbusplus::server::object::object<
@@ -40,7 +41,7 @@ struct ResetButton
         int ret = -1;
 
         // config gpio
-        ret = ::configGpio(RESET_BUTTON, &fd, bus);
+        ret = ::configGpio(rstButtonNum, rstButtonDirection, &fd, bus);
         if (ret < 0)
         {
             phosphor::logging::log<phosphor::logging::level::ERR>(
@@ -106,14 +107,14 @@ struct ResetButton
 
         if (buf == '0')
         {
-            phosphor::logging::log<phosphor::logging::level::DEBUG>(
+            phosphor::logging::log<phosphor::logging::level::INFO>(
                 "RESET_BUTTON: pressed");
             // emit pressed signal
             resetButton->pressed();
         }
         else
         {
-            phosphor::logging::log<phosphor::logging::level::DEBUG>(
+            phosphor::logging::log<phosphor::logging::level::INFO>(
                 "RESET_BUTTON: released");
             // released
             resetButton->released();

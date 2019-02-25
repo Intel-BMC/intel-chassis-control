@@ -22,7 +22,8 @@
 #include "common.hpp"
 #include "gpio.hpp"
 
-const static constexpr char *POWER_BUTTON = "POWER_BUTTON";
+const static constexpr int32_t powerButtonNum = 34;
+const static constexpr char *powerButtonDirection = "both";
 
 struct PowerButton
     : sdbusplus::server::object::object<
@@ -40,7 +41,7 @@ struct PowerButton
         int ret = -1;
 
         // config gpio
-        ret = ::configGpio(POWER_BUTTON, &fd, bus);
+        ret = ::configGpio(powerButtonNum, powerButtonDirection, &fd, bus);
         if (ret < 0)
         {
             phosphor::logging::log<phosphor::logging::level::ERR>(
@@ -107,14 +108,14 @@ struct PowerButton
 
         if (buf == '0')
         {
-            phosphor::logging::log<phosphor::logging::level::DEBUG>(
+            phosphor::logging::log<phosphor::logging::level::INFO>(
                 "POWER_BUTTON: pressed");
             // emit pressed signal
             powerButton->pressed();
         }
         else
         {
-            phosphor::logging::log<phosphor::logging::level::DEBUG>(
+            phosphor::logging::log<phosphor::logging::level::INFO>(
                 "POWER_BUTTON: released");
             // released
             powerButton->released();

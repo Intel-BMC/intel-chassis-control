@@ -124,7 +124,7 @@ struct ChassisControl
         sd_id128_to_string(id, s);
         uUID(std::string(s));
 
-        phosphor::logging::log<phosphor::logging::level::DEBUG>(
+        phosphor::logging::log<phosphor::logging::level::INFO>(
             "ChassisControl is created.",
             phosphor::logging::entry("UUID=%s", s));
     }

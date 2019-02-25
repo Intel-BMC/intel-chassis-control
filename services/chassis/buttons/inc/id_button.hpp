@@ -22,7 +22,8 @@
 #include "common.hpp"
 #include "gpio.hpp"
 
-const static constexpr char *ID_BUTTON = "ID_BTN";
+const static constexpr int32_t idButtonNum = 218;
+const static constexpr char *idButtonDirection = "both";
 
 struct IDButton
     : sdbusplus::server::object::object<
@@ -40,7 +41,7 @@ struct IDButton
         int ret = -1;
 
         // config gpio
-        ret = ::configGpio(ID_BUTTON, &fd, bus);
+        ret = ::configGpio(idButtonNum, idButtonDirection, &fd, bus);
         if (ret < 0)
         {
             phosphor::logging::log<phosphor::logging::level::ERR>(
@@ -106,14 +107,14 @@ struct IDButton
 
         if (buf == '0')
         {
-            phosphor::logging::log<phosphor::logging::level::DEBUG>(
+            phosphor::logging::log<phosphor::logging::level::INFO>(
                 "ID_BUTTON: pressed");
             // emit pressed signal
             idButton->pressed();
         }
         else
         {
-            phosphor::logging::log<phosphor::logging::level::DEBUG>(
+            phosphor::logging::log<phosphor::logging::level::INFO>(
                 "ID_BUTTON: released");
             // released
             idButton->released();
