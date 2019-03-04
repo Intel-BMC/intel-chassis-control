@@ -18,6 +18,14 @@
 #include <chrono>
 #include <xyz/openbmc_project/Common/error.hpp>
 
+const static constexpr char *ledService =
+    "xyz.openbmc_project.LED.GroupManager";
+const static constexpr char *ledIDObj =
+    "/xyz/openbmc_project/led/groups/enclosure_identify";
+const static constexpr char *ledInterface = "xyz.openbmc_project.Led.Group";
+const static constexpr char *ledProp = "Asserted";
+const static constexpr char *propInterface = "org.freedesktop.DBus.Properties";
+
 const static constexpr char *SYSTEMD_SERVICE = "org.freedesktop.systemd1";
 const static constexpr char *SYSTEMD_OBJ_PATH = "/org/freedesktop/systemd1";
 const static constexpr char *SYSTEMD_INTERFACE =
@@ -109,6 +117,62 @@ int32_t ChassisControl::getPowerState()
     result.read(state);
 
     return state;
+}
+
+int8_t ChassisControl::getIDStatus(bool *status)
+{
+    sdbusplus::message::message method =
+        mBus.new_method_call(ledService, ledIDObj, propInterface, "Get");
+
+    method.append(ledInterface, ledProp);
+
+    try
+    {
+        auto reply = mBus.call(method);
+        sdbusplus::message::variant<bool> asserted;
+        reply.read(asserted);
+        *status = sdbusplus::message::variant_ns::get<bool>(asserted);
+    }
+    catch (sdbusplus::exception_t &)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get property",
+            phosphor::logging::entry("PROPERTY=%s", ledProp),
+            phosphor::logging::entry("PATH=%s", ledIDObj),
+            phosphor::logging::entry("INTERFACE=%s", ledInterface));
+        phosphor::logging::elog<
+            sdbusplus::xyz::openbmc_project::Common::Error::InternalFailure>();
+        return -1;
+    }
+
+    return 0;
+}
+
+int8_t ChassisControl::setIDStatus(bool status)
+{
+    sdbusplus::message::message method =
+        mBus.new_method_call(ledService, ledIDObj, propInterface, "Set");
+
+    method.append(ledInterface, ledProp,
+                  sdbusplus::message::variant<bool>(status));
+
+    try
+    {
+        mBus.call(method);
+    }
+    catch (sdbusplus::exception_t &)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to set property",
+            phosphor::logging::entry("PROPERTY=%s", ledProp),
+            phosphor::logging::entry("PATH=%s", ledIDObj),
+            phosphor::logging::entry("INTERFACE=%s", ledInterface));
+        phosphor::logging::elog<
+            sdbusplus::xyz::openbmc_project::Common::Error::InternalFailure>();
+        return -1;
+    }
+
+    return 0;
 }
 
 std::string ChassisControl::uUID(std::string value)

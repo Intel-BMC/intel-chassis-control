@@ -22,6 +22,11 @@
 #include <systemd/sd-event.h>
 #include <systemd/sd-id128.h>
 
+const static constexpr char *idButtonPath =
+    "/xyz/openbmc_project/Chassis/Buttons/ID0";
+const static constexpr char *idButtonInterface =
+    "xyz.openbmc_project.Chassis.Buttons.ID";
+
 const static constexpr char *POWER_BUTTON_PATH =
     "/xyz/openbmc_project/Chassis/Buttons/Power0";
 const static constexpr char *POWER_BUTTON_INTF =
@@ -97,7 +102,42 @@ struct ChassisControl
                     "resetButtonPressed callback function is called...");
                 this->softReboot();
                 return;
+            }),
+        idButtonPressedSignal(
+            bus,
+            sdbusplus::bus::match::rules::type::signal() +
+                sdbusplus::bus::match::rules::member("Pressed") +
+                sdbusplus::bus::match::rules::path(idButtonPath) +
+                sdbusplus::bus::match::rules::interface(idButtonInterface),
+            [this](sdbusplus::message::message &msg) {
+                bool status = false;
+                int8_t ret = 0;
+                phosphor::logging::log<phosphor::logging::level::INFO>(
+                    "idButtonPressed callback function is called...");
+
+                /*
+                 *TODO needs to support ID blinking state,
+                 * and sync with ipmi chassis id command.
+                 * Since both of them are changing the same 'Asserted' property
+                 */
+                ret = this->getIDStatus(&status);
+                if (ret != 0)
+                {
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                        "idButtonPressed callback getIDStatus error!");
+                    return;
+                }
+
+                ret = this->setIDStatus(!status);
+                if (ret != 0)
+                {
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                        "idButtonPressed callback setIDStatus error!");
+                    return;
+                }
+                return;
             })
+
     {
         sd_id128_t id = SD_ID128_NULL;
         int r = 0;
@@ -144,4 +184,7 @@ struct ChassisControl
 
     sdbusplus::bus::match_t powerButtonPressedSignal;
     sdbusplus::bus::match_t resetButtonPressedSignal;
+    sdbusplus::bus::match_t idButtonPressedSignal;
+    int8_t getIDStatus(bool *status);
+    int8_t setIDStatus(bool status);
 };
