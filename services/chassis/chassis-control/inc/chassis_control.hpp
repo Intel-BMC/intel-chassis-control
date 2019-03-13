@@ -22,6 +22,10 @@
 #include <systemd/sd-event.h>
 #include <systemd/sd-id128.h>
 
+const static constexpr char *powerControlPath =
+    "/xyz/openbmc_project/Chassis/Control/Power0";
+const static constexpr char *powerControlInterface =
+    "xyz.openbmc_project.Chassis.Control.Power";
 const static constexpr char *idButtonPath =
     "/xyz/openbmc_project/Chassis/Buttons/ID0";
 const static constexpr char *idButtonInterface =
@@ -136,8 +140,43 @@ struct ChassisControl
                     return;
                 }
                 return;
-            })
+            }),
+        pgoodPropSignal(
+            bus,
+            sdbusplus::bus::match::rules::propertiesChanged(
+                powerControlPath, powerControlInterface),
+            [this](sdbusplus::message::message &msg) {
+                phosphor::logging::log<phosphor::logging::level::INFO>(
+                    "pgoodPropSignal callback function is called...");
 
+                using DbusVariant = sdbusplus::message::variant<
+                    std::string, bool, uint8_t, uint16_t, int16_t, uint32_t,
+                    int32_t, uint64_t, int64_t, double>;
+
+                std::map<std::string, DbusVariant> props;
+                std::vector<std::string> inval;
+                std::string iface;
+                msg.read(iface, props, inval);
+
+                for (const auto &t : props)
+                {
+                    auto key = t.first;
+                    auto value = t.second;
+                    if (key == "pgood")
+                    {
+                        int32_t pgood =
+                            sdbusplus::message::variant_ns::get<int32_t>(value);
+                        if (!pgood)
+                        {
+                            phosphor::logging::log<
+                                phosphor::logging::level::INFO>(
+                                "pgood signal changed to low, powerOff");
+                            this->powerOff();
+                        }
+                        break;
+                    }
+                }
+            })
     {
         sd_id128_t id = SD_ID128_NULL;
         int r = 0;
@@ -185,6 +224,7 @@ struct ChassisControl
     sdbusplus::bus::match_t powerButtonPressedSignal;
     sdbusplus::bus::match_t resetButtonPressedSignal;
     sdbusplus::bus::match_t idButtonPressedSignal;
+    sdbusplus::bus::match_t pgoodPropSignal;
     int8_t getIDStatus(bool *status);
     int8_t setIDStatus(bool status);
 };
