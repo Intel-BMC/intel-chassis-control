@@ -22,4 +22,6 @@ struct EventDeleter
         event = sd_event_unref(event);
     }
 };
+
 using EventPtr = std::unique_ptr<sd_event, EventDeleter>;
+const static constexpr char *propertiesIntf = "org.freedesktop.DBus.Properties";

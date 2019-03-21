@@ -38,8 +38,8 @@ int32_t PowerControl::forcePowerOff()
 {
     int ret = 0;
 
-    ret = i2cSet(PCH_DEVICE_BUS_ADDRESS, PCH_DEVICE_SLAVE_ADDRESS,
-                 PCH_CMD_REGISTER, PCH_POWER_DOWN_CMD);
+    ret = i2cSet(pchDevBusAddress, pchDevSlaveAddress, pchCmdReg,
+                 pchPowerDownCmd);
     if (ret < 0)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>("i2cSet error!");
@@ -53,37 +53,17 @@ int32_t PowerControl::triggerReset()
     int count = 0;
     char buf = '0';
 
-    phosphor::logging::log<phosphor::logging::level::DEBUG>("triggerReset");
-
-    ret = ::lseek(reset_out_fd, 0, SEEK_SET);
-    if (ret < 0)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>("lseek error!");
-        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
-            IOError();
-    }
-
-    buf = '0';
+    phosphor::logging::log<phosphor::logging::level::INFO>("triggerReset");
 
     auto disable = DisablePassthrough();
-    ret = ::write(reset_out_fd, &buf, sizeof(buf));
-    if (ret < 0)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>("write error!");
-        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
-            IOError();
-    }
+    // Set GpipDaemon::Power_UP Value property to change host power state.
+    setGpioDaemonProperty(gpioDaemonResetOutPath, "Direction",
+                          std::string("out"));
+    setGpioDaemonProperty(gpioDaemonResetOutPath, "Value", true);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(RESET_PULSE_TIME_MS));
+    std::this_thread::sleep_for(std::chrono::milliseconds(resetPulseTimeMs));
+    setGpioDaemonProperty(gpioDaemonResetOutPath, "Value", false);
 
-    buf = '1';
-    ret = ::write(reset_out_fd, &buf, sizeof(buf));
-    if (ret < 0)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>("write error!");
-        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
-            IOError();
-    }
     return 0;
 }
 
@@ -105,7 +85,7 @@ int32_t PowerControl::setPowerState(int32_t newState)
 
     if (powerStateReset == newState)
     {
-        phosphor::logging::log<phosphor::logging::level::DEBUG>(
+        phosphor::logging::log<phosphor::logging::level::INFO>(
             "setPowerState system reset");
         triggerReset();
         return 0;
@@ -113,58 +93,33 @@ int32_t PowerControl::setPowerState(int32_t newState)
 
     if (state() == newState)
     {
-        phosphor::logging::log<phosphor::logging::level::WARNING>(
+        phosphor::logging::log<phosphor::logging::level::INFO>(
             "Same powerstate",
             phosphor::logging::entry("NEWSTATE=%d", newState));
         return 0;
     }
 
     state(newState);
-
-    ret = ::lseek(power_up_fd, 0, SEEK_SET);
-    if (ret < 0)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>("lseek error!");
-        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
-            IOError();
-    }
-
-    buf = '0';
-
     auto disable = DisablePassthrough();
-    ret = ::write(power_up_fd, &buf, sizeof(buf));
-    if (ret < 0)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>("write error!");
-        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
-            IOError();
-    }
 
-    phosphor::logging::log<phosphor::logging::level::DEBUG>(
-        "setPowerState power on");
-    std::this_thread::sleep_for(std::chrono::milliseconds(POWER_PULSE_TIME_MS));
+    // Set GpipDaemon::Power_UP Value property to change host power state.
+    setGpioDaemonProperty(gpioDaemonPowerUpPath, "Direction",
+                          std::string("out"));
+    setGpioDaemonProperty(gpioDaemonPowerUpPath, "Value", true);
 
-    buf = '1';
-    ret = ::write(power_up_fd, &buf, sizeof(buf));
-    if (ret < 0)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>("write error!");
-        throw sdbusplus::xyz::openbmc_project::Chassis::Common::Error::
-            IOError();
-    }
+    phosphor::logging::log<phosphor::logging::level::INFO>(
+        "setPowerState switch power state");
+    std::this_thread::sleep_for(std::chrono::milliseconds(powerPulseTimeMs));
+    setGpioDaemonProperty(gpioDaemonPowerUpPath, "Value", false);
 
     if (0 == newState)
     {
-        /*
-         * For power off, currently there is a known issue, the "long-press"
-         * power button cannot power off the host, a workaround is perform force
-         * power off after waitting for a while
-         */
+
         std::this_thread::sleep_for(
-            std::chrono::milliseconds(POWER_PULSE_TIME_MS));
+            std::chrono::milliseconds(powerPulseTimeMs));
         if (1 == pgood())
         { // still on, force off!
-            phosphor::logging::log<phosphor::logging::level::DEBUG>(
+            phosphor::logging::log<phosphor::logging::level::INFO>(
                 "Perform force power off");
             count = 0;
             do
@@ -178,12 +133,23 @@ int32_t PowerControl::setPowerState(int32_t newState)
                 }
                 ret = forcePowerOff();
                 std::this_thread::sleep_for(
-                    std::chrono::milliseconds(POLLING_INTERVAL_MS));
+                    std::chrono::milliseconds(pollingIntervalMs));
             } while (ret != 0);
         }
     }
 
     return 0;
+}
+
+void PowerControl::setGpioDaemonProperty(
+    const char* path, const char* property,
+    sdbusplus::message::variant<bool, std::string> value)
+{
+    sdbusplus::message::message method =
+        bus.new_method_call(gpioDaemonService, path, propertiesIntf, "Set");
+    method.append(gpioDaemonCtrlIntf, property);
+    method.append(value);
+    bus.call(method);
 }
 
 int32_t PowerControl::getPowerState()

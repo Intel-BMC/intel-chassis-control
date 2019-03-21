@@ -50,7 +50,7 @@ endif()
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
 target_link_libraries(${PROJECT_NAME} ${DBUSINTERFACE_LIBRARIES}
-                      chassisgpio chassisi2c)
+                      chassisi2c)
 target_link_libraries(${PROJECT_NAME} "${SDBUSPLUSPLUS_LIBRARIES} -lstdc++fs")
 target_link_libraries (${PROJECT_NAME} i2c)
 

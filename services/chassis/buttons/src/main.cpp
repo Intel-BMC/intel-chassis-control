@@ -42,11 +42,9 @@ int main(int argc, char *argv[])
 
     bus.request_name("xyz.openbmc_project.Chassis.Buttons");
 
-    PowerButton powerButton{bus, POWER_DBUS_OBJECT_NAME, std::move(eventP)};
-
-    ResetButton resetButton{bus, RESET_DBUS_OBJECT_NAME, std::move(eventP)};
-
-    IDButton idButton{bus, ID_DBUS_OBJECT_NAME, std::move(eventP)};
+    PowerButton powerButton{bus, POWER_DBUS_OBJECT_NAME};
+    ResetButton resetButton{bus, RESET_DBUS_OBJECT_NAME};
+    IDButton idButton{bus, ID_DBUS_OBJECT_NAME};
 
     try
     {
