@@ -15,6 +15,10 @@
 */
 #include "power_control.hpp"
 
+std::unique_ptr<PowerControl> powerControlObject;
+std::unique_ptr<sdbusplus::bus::match_t> interfacesAddedSignal;
+std::unique_ptr<sdbusplus::server::manager_t> mgrControlObject;
+
 int main(int argc, char* argv[])
 {
     int ret = 0;
@@ -35,11 +39,59 @@ int main(int argc, char* argv[])
     event = nullptr;
 
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-    sdbusplus::server::manager_t m{bus, DBUS_OBJECT_NAME};
 
-    bus.request_name(DBUS_INTF_NAME);
-
-    PowerControl powerControl{bus, DBUS_OBJECT_NAME, eventP};
+    sdbusplus::message::variant<bool, std::string> propValue;
+    if (getGpioDaemonProperty(bus, gpioDaemonPowerGoodPath, "Value",
+                              propValue) == 0)
+    {
+        bus.request_name(DBUS_INTF_NAME);
+        mgrControlObject = std::make_unique<sdbusplus::server::manager_t>(
+            bus, DBUS_OBJECT_NAME);
+        bool pgood = sdbusplus::message::variant_ns::get<bool>(propValue);
+        powerControlObject = std::make_unique<PowerControl>(
+            bus, DBUS_OBJECT_NAME, pgood, eventP);
+    }
+    // Register for InterfacesAddedSignal, to match the state change / object
+    // change. This will handle all the cases of entity-manager restart,
+    // gpio-daemon restart and still hold the power control state properly.
+    interfacesAddedSignal = std::make_unique<sdbusplus::bus::match_t>(
+        bus,
+        sdbusplus::bus::match::rules::type::signal() +
+            sdbusplus::bus::match::rules::member("InterfacesAdded") +
+            "arg0path='" + gpioDaemonPowerGoodPath + "'",
+        [&](sdbusplus::message::message& msg) {
+            sdbusplus::message::object_path objectPath;
+            using ObjectTypes =
+                std::map<std::string, std::map<std::string, BasicVariantType>>;
+            ObjectTypes objects;
+            msg.read(objectPath, objects);
+            for (const auto& objInterfaces : objects)
+            {
+                if (gpioDaemonCtrlIntf == objInterfaces.first)
+                {
+                    auto valPropMap = objInterfaces.second.find("Value");
+                    if (valPropMap != objInterfaces.second.end())
+                    {
+                        auto pgood = sdbusplus::message::variant_ns::get<bool>(
+                            valPropMap->second);
+                        if (powerControlObject == nullptr)
+                        {
+                            bus.request_name(DBUS_INTF_NAME);
+                            mgrControlObject =
+                                std::make_unique<sdbusplus::server::manager_t>(
+                                    bus, DBUS_OBJECT_NAME);
+                            powerControlObject = std::make_unique<PowerControl>(
+                                bus, DBUS_OBJECT_NAME, pgood, eventP);
+                        }
+                        else
+                        {
+                            powerControlObject->powerGoodPropertyHandler(
+                                objInterfaces.second);
+                        }
+                    }
+                }
+            }
+        });
 
     auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now());
