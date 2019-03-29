@@ -67,17 +67,20 @@ void PowerControl::powerGoodPropertyHandler(
             "PowerControl: Power_Good property handler is called");
         auto value =
             sdbusplus::message::variant_ns::get<bool>(valPropMap->second);
-        phosphor::logging::log<phosphor::logging::level::INFO>(
-            value ? "PSGOOD" : "!PSGOOD");
-        this->state(value);
-        this->pgood(value);
-        if (value)
+        if (this->pgood() != value)
         {
-            this->powerGood();
-        }
-        else
-        {
-            this->powerLost();
+            phosphor::logging::log<phosphor::logging::level::INFO>(
+                value ? "PSGOOD" : "!PSGOOD");
+            this->state(value);
+            this->pgood(value);
+            if (value)
+            {
+                this->powerGood();
+            }
+            else
+            {
+                this->powerLost();
+            }
         }
     }
 }
