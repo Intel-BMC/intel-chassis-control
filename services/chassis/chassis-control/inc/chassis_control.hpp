@@ -19,6 +19,7 @@
 #include "xyz/openbmc_project/Chassis/Common/error.hpp"
 #include "xyz/openbmc_project/Chassis/Control/Chassis/server.hpp"
 #include <phosphor-logging/elog-errors.hpp>
+#include <systemd/sd-journal.h>
 #include <systemd/sd-event.h>
 #include <systemd/sd-id128.h>
 
@@ -93,6 +94,11 @@ struct ChassisControl
                     phosphor::logging::log<phosphor::logging::level::ERR>(
                         "UNKNOWN power state");
                 }
+
+                sd_journal_send("MESSAGE=%s", "Power Button Pressed",
+                                "PRIORITY=%i", LOG_INFO,
+                                "REDFISH_MESSAGE_ID=%s", "PowerButtonPressed",
+                                NULL);
                 return;
             }),
         resetButtonPressedSignal(
@@ -105,6 +111,11 @@ struct ChassisControl
                 phosphor::logging::log<phosphor::logging::level::INFO>(
                     "resetButtonPressed callback function is called...");
                 this->softReboot();
+
+                sd_journal_send("MESSAGE=%s", "Reset Button Pressed",
+                                "PRIORITY=%i", LOG_INFO,
+                                "REDFISH_MESSAGE_ID=%s", "ResetButtonPressed",
+                                NULL);
                 return;
             }),
         idButtonPressedSignal(
