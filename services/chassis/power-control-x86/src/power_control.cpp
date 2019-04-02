@@ -34,6 +34,54 @@ struct DisablePassthrough
     }
 };
 
+class LpcSioDevFile
+{
+  private:
+    int fd = -1;
+    struct sio_ioctl_data sioData;
+
+  public:
+    LpcSioDevFile()
+    {
+        fd = ::open(LPC_SIO_DEVPATH, O_RDWR);
+        if (fd < 0)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Open LPC-SIO error!");
+            return;
+        }
+    }
+
+    int getData(unsigned short sioCmd, unsigned int& data)
+    {
+        if (fd < 0)
+        {
+            return -1;
+        }
+        sioData.sio_cmd = sioCmd;
+        sioData.param = 0;
+        if (::ioctl(fd, SIO_IOC_COMMAND, &sioData) == 0)
+        {
+            data = sioData.data;
+            return 0;
+        }
+        else
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ioctl SIO_GET_PFAIL_STATUS error!");
+            return -1;
+        }
+    }
+
+    ~LpcSioDevFile()
+    {
+        if (fd > 0)
+        {
+            ::close(fd);
+        }
+    }
+};
+
 PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
                            const bool pgood,
                            phosphor::watchdog::EventPtr event) :
@@ -54,6 +102,29 @@ PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
 {
     this->state(pgood);
     this->pgood(pgood);
+
+    LpcSioDevFile devfile;
+    unsigned int data = 0;
+    int ret = 0;
+    ret = devfile.getData(SIO_GET_PFAIL_STATUS, data);
+
+    if (ret)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "ioctl SIO_GET_PFAIL_STATUS error!");
+        return;
+    }
+
+    if (data)
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>("AC lost on\n");
+        pFail(true);
+    }
+    else
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>("!AC lost on\n");
+        pFail(false);
+    }
 }
 
 void PowerControl::powerGoodPropertyHandler(
