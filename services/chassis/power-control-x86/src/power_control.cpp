@@ -34,6 +34,54 @@ struct DisablePassthrough
     }
 };
 
+PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
+                           const bool pgood,
+                           phosphor::watchdog::EventPtr event) :
+    sdbusplus::server::object_t<pwr_control>(bus, path),
+    bus(bus),
+    propertiesChangedSignal(
+        bus,
+        sdbusplus::bus::match::rules::type::signal() +
+            sdbusplus::bus::match::rules::member("PropertiesChanged") +
+            sdbusplus::bus::match::rules::path(gpioDaemonPowerGoodPath) +
+            sdbusplus::bus::match::rules::interface(propertiesIntf),
+        [this](sdbusplus::message::message& msg) {
+            std::string objectName;
+            std::map<std::string, BasicVariantType> propertyMap;
+            msg.read(objectName, propertyMap);
+            powerGoodPropertyHandler(propertyMap);
+        })
+{
+    this->state(pgood);
+    this->pgood(pgood);
+}
+
+void PowerControl::powerGoodPropertyHandler(
+    const std::map<std::string, BasicVariantType>& propertyMap)
+{
+    // Check if it was the Value property that changed.
+    auto valPropMap = propertyMap.find("Value");
+    if (valPropMap != propertyMap.end())
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "PowerControl: Power_Good property handler is called");
+        auto value =
+            sdbusplus::message::variant_ns::get<bool>(valPropMap->second);
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            value ? "PSGOOD" : "!PSGOOD");
+        this->state(value);
+        this->pgood(value);
+        if (value)
+        {
+            this->powerGood();
+        }
+        else
+        {
+            this->powerLost();
+        }
+    }
+}
+
 int32_t PowerControl::forcePowerOff()
 {
     int ret = 0;
@@ -57,12 +105,12 @@ int32_t PowerControl::triggerReset()
 
     auto disable = DisablePassthrough();
     // Set GpipDaemon::Power_UP Value property to change host power state.
-    setGpioDaemonProperty(gpioDaemonResetOutPath, "Direction",
+    setGpioDaemonProperty(bus, gpioDaemonResetOutPath, "Direction",
                           std::string("out"));
-    setGpioDaemonProperty(gpioDaemonResetOutPath, "Value", true);
+    setGpioDaemonProperty(bus, gpioDaemonResetOutPath, "Value", true);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(resetPulseTimeMs));
-    setGpioDaemonProperty(gpioDaemonResetOutPath, "Value", false);
+    setGpioDaemonProperty(bus, gpioDaemonResetOutPath, "Value", false);
 
     return 0;
 }
@@ -103,14 +151,14 @@ int32_t PowerControl::setPowerState(int32_t newState)
     auto disable = DisablePassthrough();
 
     // Set GpipDaemon::Power_UP Value property to change host power state.
-    setGpioDaemonProperty(gpioDaemonPowerUpPath, "Direction",
+    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Direction",
                           std::string("out"));
-    setGpioDaemonProperty(gpioDaemonPowerUpPath, "Value", true);
+    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Value", true);
 
     phosphor::logging::log<phosphor::logging::level::INFO>(
         "setPowerState switch power state");
     std::this_thread::sleep_for(std::chrono::milliseconds(powerPulseTimeMs));
-    setGpioDaemonProperty(gpioDaemonPowerUpPath, "Value", false);
+    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Value", false);
 
     if (0 == newState)
     {
@@ -141,15 +189,38 @@ int32_t PowerControl::setPowerState(int32_t newState)
     return 0;
 }
 
-void PowerControl::setGpioDaemonProperty(
-    const char* path, const char* property,
-    sdbusplus::message::variant<bool, std::string> value)
+void setGpioDaemonProperty(sdbusplus::bus::bus& bus, const char* path,
+                           const char* property,
+                           sdbusplus::message::variant<bool, std::string> value)
 {
     sdbusplus::message::message method =
         bus.new_method_call(gpioDaemonService, path, propertiesIntf, "Set");
     method.append(gpioDaemonCtrlIntf, property);
     method.append(value);
     bus.call(method);
+}
+
+int getGpioDaemonProperty(sdbusplus::bus::bus& bus, const char* path,
+                          const char* property,
+                          sdbusplus::message::variant<bool, std::string>& value)
+{
+    try
+    {
+        auto method =
+            bus.new_method_call(gpioDaemonService, path, propertiesIntf, "Get");
+        method.append(gpioDaemonCtrlIntf, property);
+        auto reply = bus.call(method);
+        reply.read(value);
+    }
+    catch (const sdbusplus::exception::SdBusError& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "getGpioDaemonProperty failed",
+            phosphor::logging::entry("OBJPATH:%s", path),
+            phosphor::logging::entry("PROP:%s", property));
+        return -EIO;
+    }
+    return 0;
 }
 
 int32_t PowerControl::getPowerState()

@@ -56,74 +56,25 @@ const static constexpr char* gpioDaemonResetOutPath =
 const static constexpr char* gpioDaemonService = "xyz.openbmc_project.Gpio";
 const static constexpr char* gpioDaemonPowerGoodPath =
     "/xyz/openbmc_project/control/gpio/Power_Good";
-static bool first_event = true;
 
 using pwr_control =
     sdbusplus::xyz::openbmc_project::Chassis::Control::server::Power;
 
+using BasicVariantType =
+    sdbusplus::message::variant<std::string, int64_t, uint64_t, double, int32_t,
+                                uint32_t, int16_t, uint16_t, uint8_t, bool>;
+
+void setGpioDaemonProperty(
+    sdbusplus::bus::bus& bus, const char* path, const char* property,
+    sdbusplus::message::variant<bool, std::string> value);
+int getGpioDaemonProperty(
+    sdbusplus::bus::bus& bus, const char* path, const char* property,
+    sdbusplus::message::variant<bool, std::string>& value);
+
 struct PowerControl : sdbusplus::server::object_t<pwr_control>
 {
-    PowerControl(sdbusplus::bus::bus& bus, const char* path,
-                 phosphor::watchdog::EventPtr event) :
-        sdbusplus::server::object_t<pwr_control>(bus, path),
-        bus(bus),
-        propertiesChangedSignal(
-            bus,
-            sdbusplus::bus::match::rules::type::signal() +
-                sdbusplus::bus::match::rules::member("PropertiesChanged") +
-                sdbusplus::bus::match::rules::path(gpioDaemonPowerGoodPath) +
-                sdbusplus::bus::match::rules::interface(propertiesIntf),
-            [this](sdbusplus::message::message& msg) {
-                phosphor::logging::log<phosphor::logging::level::INFO>(
-                    "PowerControl propertiesChangedSignal callback function is "
-                    "called...");
-
-                std::string objectName;
-                std::map<std::string, sdbusplus::message::variant<bool>>
-                    msgData;
-                msg.read(objectName, msgData);
-                // Check if it was the Value property that changed.
-                auto valPropMap = msgData.find("Value");
-                {
-                    if (valPropMap != msgData.end())
-                    {
-                        if (sdbusplus::message::variant_ns::get<bool>(
-                                valPropMap->second))
-                        {
-
-                            phosphor::logging::log<
-                                phosphor::logging::level::INFO>("PSGOOD");
-                            this->state(1);
-                            this->pgood(1);
-                            if (first_event)
-                            {
-                                first_event = false;
-                            }
-                            else
-                            {
-                                this->powerGood();
-                            }
-                        }
-                        else
-                        {
-                            phosphor::logging::log<
-                                phosphor::logging::level::INFO>("!PSGOOD");
-                            this->state(0);
-                            this->pgood(0);
-                            if (first_event)
-                            {
-                                first_event = false;
-                            }
-                            else
-                            {
-                                this->powerLost();
-                            }
-                        }
-                    }
-                }
-            })
-    {
-    }
+    PowerControl(sdbusplus::bus::bus& bus, const char* path, const bool pgood,
+                 phosphor::watchdog::EventPtr event);
 
     ~PowerControl()
     {
@@ -132,13 +83,11 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
     int32_t forcePowerOff() override;
     int32_t setPowerState(int32_t newState) override;
     int32_t getPowerState() override;
+    void powerGoodPropertyHandler(
+        const std::map<std::string, BasicVariantType>& propertyMap);
 
   private:
     sdbusplus::bus::bus& bus;
     int32_t triggerReset();
-
-    void setGpioDaemonProperty(
-        const char* path, const char* property,
-        sdbusplus::message::variant<bool, std::string> value);
     sdbusplus::bus::match_t propertiesChangedSignal;
 };
