@@ -85,8 +85,10 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
     int32_t getPowerState() override;
     void powerGoodPropertyHandler(
         const std::map<std::string, BasicVariantType>& propertyMap);
+    void timeOutHandler();
 
   private:
+    phosphor::watchdog::Timer timer;
     sdbusplus::bus::bus& bus;
     int32_t triggerReset();
     sdbusplus::bus::match_t propertiesChangedSignal;

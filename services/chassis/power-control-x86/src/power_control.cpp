@@ -82,11 +82,58 @@ class LpcSioDevFile
     }
 };
 
+void PowerControl::timeOutHandler()
+{
+    LpcSioDevFile devfile;
+    unsigned int data = 0;
+    int ret = 0;
+
+    ret = devfile.getData(SIO_GET_ACPI_STATE, data);
+    if (ret)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "ioctl SIO_GET_ACPI_STATE error!");
+    }
+    else
+    {
+        if (s4s5State() != data)
+        {
+            phosphor::logging::log<phosphor::logging::level::INFO>(
+                "ACPI state changed\n",
+                phosphor::logging::entry("OLD=%d", s4s5State()),
+                phosphor::logging::entry("NEW=%d", data));
+            s4s5State(data);
+        }
+    }
+
+    ret = devfile.getData(SIO_GET_PWRGD_STATUS, data);
+    if (ret)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "ioctl SIO_GET_PWRGD_STATUS error!");
+    }
+    else
+    {
+        if (vrdGood() != data)
+        {
+            phosphor::logging::log<phosphor::logging::level::INFO>(
+                "VRD_PWR_GOOD changed\n",
+                phosphor::logging::entry("OLD=%d", vrdGood()),
+                phosphor::logging::entry("NEW=%d", data));
+            vrdGood(data);
+        }
+    }
+
+    this->timer.start(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::milliseconds(pollingIntervalMs)));
+    this->timer.setEnabled<std::true_type>();
+}
+
 PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
                            const bool pgood,
                            phosphor::watchdog::EventPtr event) :
     sdbusplus::server::object_t<pwr_control>(bus, path),
-    bus(bus),
+    bus(bus), timer(event, std::bind(&PowerControl::timeOutHandler, this)),
     propertiesChangedSignal(
         bus,
         sdbusplus::bus::match::rules::type::signal() +
@@ -100,14 +147,20 @@ PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
             powerGoodPropertyHandler(propertyMap);
         })
 {
-    this->state(pgood);
-    this->pgood(pgood);
-
     LpcSioDevFile devfile;
     unsigned int data = 0;
     int ret = 0;
-    ret = devfile.getData(SIO_GET_PFAIL_STATUS, data);
 
+    this->state(pgood);
+    this->pgood(pgood);
+
+    timer.start(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::milliseconds(pollingIntervalMs)));
+    timer.setEnabled<std::true_type>();
+    phosphor::logging::log<phosphor::logging::level::INFO>(
+        "Enable SIO polling timer");
+
+    ret = devfile.getData(SIO_GET_PFAIL_STATUS, data);
     if (ret)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
