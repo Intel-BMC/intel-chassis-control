@@ -258,14 +258,6 @@ int32_t PowerControl::setPowerState(int32_t newState)
     phosphor::logging::log<phosphor::logging::level::INFO>(
         "setPowerState", phosphor::logging::entry("NEWSTATE=%d", newState));
 
-    if (powerStateReset == newState)
-    {
-        phosphor::logging::log<phosphor::logging::level::INFO>(
-            "setPowerState system reset");
-        triggerReset();
-        return 0;
-    }
-
     if (state() == newState)
     {
         phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -275,6 +267,15 @@ int32_t PowerControl::setPowerState(int32_t newState)
     }
 
     state(newState);
+
+    if (powerStateReset == newState)
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "setPowerState system reset");
+        triggerReset();
+        return 0;
+    }
+
     auto disable = DisablePassthrough();
 
     // Set GpipDaemon::Power_UP Value property to change host power state.
