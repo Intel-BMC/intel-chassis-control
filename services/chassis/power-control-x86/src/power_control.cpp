@@ -14,6 +14,7 @@
 // limitations under the License.
 */
 #include <boost/process/child.hpp>
+#include <systemd/sd-journal.h>
 #include "power_control.hpp"
 
 constexpr const char* passthroughPath = "/usr/bin/set-passthrough.sh";
@@ -163,6 +164,7 @@ PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
     unsigned int data = 0;
     int ret = 0;
 
+    this->ACOnLogged = false;
     this->state(pgood);
     this->pgood(pgood);
 
@@ -184,6 +186,11 @@ PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
     {
         phosphor::logging::log<phosphor::logging::level::INFO>("AC lost on\n");
         pFail(true);
+
+        if (pgood)
+        {
+            this->ACOnLog();
+        }
     }
     else
     {
@@ -217,12 +224,20 @@ void PowerControl::powerGoodPropertyHandler(
             "PowerControl: Power_Good property handler is called");
         auto value =
             sdbusplus::message::variant_ns::get<bool>(valPropMap->second);
+
+        if (value && this->pFail() && !this->ACOnLogged)
+        {
+            // for first power on after AC lost, log to redfish
+            this->ACOnLog();
+        }
+
         if (this->pgood() != value)
         {
             phosphor::logging::log<phosphor::logging::level::INFO>(
                 value ? "PSGOOD" : "!PSGOOD");
             this->state(value);
             this->pgood(value);
+
             if (value)
             {
                 this->powerGood();
@@ -400,4 +415,13 @@ int getGpioDaemonProperty(sdbusplus::bus::bus& bus, const char* path,
 int32_t PowerControl::getPowerState()
 {
     return state();
+}
+
+void PowerControl::ACOnLog()
+{
+    sd_journal_send("MESSAGE=PowerControl: AC lost PowerOn", "PRIORITY=%i",
+                    LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.DCPowerOnAfterACLost", NULL);
+
+    this->ACOnLogged = true;
 }

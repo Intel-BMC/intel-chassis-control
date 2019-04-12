@@ -90,8 +90,10 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
     void postCompletePropertyHandler(
         const std::map<std::string, BasicVariantType>& propertyMap);
     void timeOutHandler();
+    void ACOnLog();
 
   private:
+    bool ACOnLogged;
     phosphor::watchdog::Timer timer;
     sdbusplus::bus::bus& bus;
     int32_t triggerReset();
