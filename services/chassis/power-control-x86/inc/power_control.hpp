@@ -56,6 +56,8 @@ const static constexpr char* gpioDaemonResetOutPath =
 const static constexpr char* gpioDaemonService = "xyz.openbmc_project.Gpio";
 const static constexpr char* gpioDaemonPowerGoodPath =
     "/xyz/openbmc_project/control/gpio/Power_Good";
+const static constexpr char* gpioDaemonPostCompletePath =
+    "/xyz/openbmc_project/control/gpio/Post_Complete";
 
 using pwr_control =
     sdbusplus::xyz::openbmc_project::Chassis::Control::server::Power;
@@ -85,11 +87,14 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
     int32_t getPowerState() override;
     void powerGoodPropertyHandler(
         const std::map<std::string, BasicVariantType>& propertyMap);
+    void postCompletePropertyHandler(
+        const std::map<std::string, BasicVariantType>& propertyMap);
     void timeOutHandler();
 
   private:
     phosphor::watchdog::Timer timer;
     sdbusplus::bus::bus& bus;
     int32_t triggerReset();
-    sdbusplus::bus::match_t propertiesChangedSignal;
+    sdbusplus::bus::match_t pgoodChangedSignal;
+    sdbusplus::bus::match_t postCompleteChangedSignal;
 };

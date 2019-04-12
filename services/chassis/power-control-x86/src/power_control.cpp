@@ -134,7 +134,7 @@ PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
                            phosphor::watchdog::EventPtr event) :
     sdbusplus::server::object_t<pwr_control>(bus, path),
     bus(bus), timer(event, std::bind(&PowerControl::timeOutHandler, this)),
-    propertiesChangedSignal(
+    pgoodChangedSignal(
         bus,
         sdbusplus::bus::match::rules::type::signal() +
             sdbusplus::bus::match::rules::member("PropertiesChanged") +
@@ -145,6 +145,18 @@ PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
             std::map<std::string, BasicVariantType> propertyMap;
             msg.read(objectName, propertyMap);
             powerGoodPropertyHandler(propertyMap);
+        }),
+    postCompleteChangedSignal(
+        bus,
+        sdbusplus::bus::match::rules::type::signal() +
+            sdbusplus::bus::match::rules::member("PropertiesChanged") +
+            sdbusplus::bus::match::rules::path(gpioDaemonPostCompletePath) +
+            sdbusplus::bus::match::rules::interface(propertiesIntf),
+        [this](sdbusplus::message::message& msg) {
+            std::string objectName;
+            std::map<std::string, BasicVariantType> propertyMap;
+            msg.read(objectName, propertyMap);
+            postCompletePropertyHandler(propertyMap);
         })
 {
     LpcSioDevFile devfile;
@@ -178,6 +190,20 @@ PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
         phosphor::logging::log<phosphor::logging::level::INFO>("!AC lost on\n");
         pFail(false);
     }
+
+    // init post_complete
+    sdbusplus::message::variant<bool, std::string> propValue;
+    if (getGpioDaemonProperty(bus, gpioDaemonPostCompletePath, "Value",
+                              propValue) == 0)
+    {
+        bool post = sdbusplus::message::variant_ns::get<bool>(propValue);
+        postComplete(post);
+    }
+    else
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Init Post_Complete error!");
+    }
 }
 
 void PowerControl::powerGoodPropertyHandler(
@@ -205,6 +231,26 @@ void PowerControl::powerGoodPropertyHandler(
             {
                 this->powerLost();
             }
+        }
+    }
+}
+
+void PowerControl::postCompletePropertyHandler(
+    const std::map<std::string, BasicVariantType>& propertyMap)
+{
+    // Check if it was the Value property that changed.
+    auto valPropMap = propertyMap.find("Value");
+    if (valPropMap != propertyMap.end())
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "PowerControl: Post_Complete property handler is called");
+        auto value =
+            sdbusplus::message::variant_ns::get<bool>(valPropMap->second);
+        if (this->postComplete() != value)
+        {
+            phosphor::logging::log<phosphor::logging::level::INFO>(
+                value ? "POST" : "!POST");
+            this->postComplete(value);
         }
     }
 }
