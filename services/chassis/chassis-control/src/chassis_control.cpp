@@ -25,16 +25,17 @@ const static constexpr char *ledIDObj =
 const static constexpr char *ledInterface = "xyz.openbmc_project.Led.Group";
 const static constexpr char *ledProp = "Asserted";
 const static constexpr char *propInterface = "org.freedesktop.DBus.Properties";
-
+const static constexpr char *unitInterface = "org.freedesktop.systemd1.Unit";
+const static constexpr char *activeState = "active";
+const static constexpr char *activatingState = "activating";
 const static constexpr char *SYSTEMD_SERVICE = "org.freedesktop.systemd1";
 const static constexpr char *SYSTEMD_OBJ_PATH = "/org/freedesktop/systemd1";
 const static constexpr char *SYSTEMD_INTERFACE =
     "org.freedesktop.systemd1.Manager";
-const static constexpr char *HOST_START_TARGET = "obmc-host-start@0.target";
+
 const static constexpr char *CHASSIS_HARD_POWER_OFF_TARGET =
     "obmc-chassis-hard-poweroff@0.target";
-const static constexpr char *CHASSIS_POWER_OFF_TARGET =
-    "obmc-chassis-poweroff@0.target";
+
 const static constexpr char *CHASSIS_POWER_ON_TARGET =
     "obmc-chassis-poweron@0.target";
 
@@ -69,14 +70,61 @@ int32_t ChassisControl::startSystemdUnit(const std::string &unit)
     return 0;
 }
 
+bool ChassisControl::stateActive(const std::string &target)
+{
+    std::variant<std::string> currentState;
+    sdbusplus::message::object_path unitTargetPath;
+
+    auto method = mBus.new_method_call(SYSTEMD_SERVICE, SYSTEMD_OBJ_PATH,
+                                       SYSTEMD_INTERFACE, "GetUnit");
+    method.append(target);
+
+    try
+    {
+        auto result = mBus.call(method);
+        result.read(unitTargetPath);
+    }
+    catch (const sdbusplus::exception::SdBusError &e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Error in GetUnit call",
+            phosphor::logging::entry("ERROR=%s", e.what()));
+        return false;
+    }
+
+    method = mBus.new_method_call(
+        SYSTEMD_SERVICE,
+        static_cast<const std::string &>(unitTargetPath).c_str(), propInterface,
+        "Get");
+
+    method.append(unitInterface, "ActiveState");
+
+    try
+    {
+        auto result = mBus.call(method);
+        result.read(currentState);
+    }
+    catch (const sdbusplus::exception::SdBusError &e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Error in ActiveState Get",
+            phosphor::logging::entry("ERROR=%s", e.what()));
+        return false;
+    }
+
+    const auto &currentStateStr = std::get<std::string>(currentState);
+
+    return currentStateStr == activeState || currentStateStr == activatingState;
+}
+
 int32_t ChassisControl::powerOn()
 {
-    return startSystemdUnit(HOST_START_TARGET);
+    return startSystemdUnit(hostStartTarget);
 }
 
 int32_t ChassisControl::powerOff()
 {
-    return startSystemdUnit(CHASSIS_POWER_OFF_TARGET);
+    return startSystemdUnit(chassisPowerOffTarget);
 }
 
 int32_t ChassisControl::softPowerOff()
@@ -117,6 +165,33 @@ int32_t ChassisControl::getPowerState()
     result.read(state);
 
     return state;
+}
+
+int32_t ChassisControl::getPGOODState(int32_t &pgood)
+{
+    sdbusplus::message::message method = mBus.new_method_call(
+        POWER_CONTROL_SERVICE, POWER_CONTROL_OBJ_PATH, propInterface, "Get");
+
+    method.append(POWER_CONTROL_INTERFACE, "pgood");
+
+    try
+    {
+        auto reply = mBus.call(method);
+        std::variant<int32_t> pgoodProp;
+        reply.read(pgoodProp);
+        pgood = std::get<int32_t>(pgoodProp);
+    }
+    catch (sdbusplus::exception_t &)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get property",
+            phosphor::logging::entry("PROPERTY=%s", ledProp),
+            phosphor::logging::entry("PATH=%s", ledIDObj),
+            phosphor::logging::entry("INTERFACE=%s", ledInterface));
+        return -1;
+    }
+
+    return 0;
 }
 
 int8_t ChassisControl::getIDStatus(bool *status)

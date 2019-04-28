@@ -28,6 +28,8 @@
 
 static constexpr size_t pollingIntervalMs = 500;
 
+const static constexpr char* forceOffFlagPath = "/run/openbmc/host@0-request";
+
 const static constexpr char* LPC_SIO_DEVPATH = "/dev/lpc-sio";
 const static constexpr char* PGOOD_PIN = "PGOOD";
 const static constexpr char* BIOS_POST_CMPLT_PIN = "BIOS_POST_CMPLT";
@@ -41,6 +43,7 @@ const static constexpr size_t pchPowerDownCmd = 0x02;
 
 const static constexpr size_t resetPulseTimeMs = 500;
 const static constexpr size_t powerPulseTimeMs = 200;
+const static constexpr size_t forceOffPulseTimeMs = 5000;
 
 const static constexpr uint8_t powerStateOff = 0;
 const static constexpr uint8_t powerStateOn = 1;
@@ -58,6 +61,15 @@ const static constexpr char* gpioDaemonPowerGoodPath =
     "/xyz/openbmc_project/control/gpio/Power_Good";
 const static constexpr char* gpioDaemonPostCompletePath =
     "/xyz/openbmc_project/control/gpio/Post_Complete";
+
+const static constexpr char* powerButtonPath =
+    "/xyz/openbmc_project/Chassis/Buttons/Power0";
+const static constexpr char* powerButtonIntf =
+    "xyz.openbmc_project.Chassis.Buttons.Power";
+const static constexpr char* resetButtonPath =
+    "/xyz/openbmc_project/Chassis/Buttons/Reset0";
+const static constexpr char* resetButtonIntf =
+    "xyz.openbmc_project.Chassis.Buttons.Reset";
 
 using pwr_control =
     sdbusplus::xyz::openbmc_project::Chassis::Control::server::Power;
@@ -99,4 +111,8 @@ struct PowerControl : sdbusplus::server::object_t<pwr_control>
     int32_t triggerReset();
     sdbusplus::bus::match_t pgoodChangedSignal;
     sdbusplus::bus::match_t postCompleteChangedSignal;
+    sdbusplus::bus::match_t powerButtonPressedSignal;
+    sdbusplus::bus::match_t resetButtonPressedSignal;
+    bool resetButtonPressed;
+    bool powerButtonPressed;
 };
