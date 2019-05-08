@@ -15,6 +15,9 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 set(POWER_DBUS_OBJECT_NAME "xyz/openbmc_project/Chassis/Buttons/Power")
 set(POWER_DBUS_INTF_NAME "xyz.openbmc_project.Chassis.Buttons.Power")
 
+set(NMI_DBUS_OBJECT_NAME "xyz/openbmc_project/Chassis/Buttons/NMI")
+set(NMI_DBUS_INTF_NAME "xyz.openbmc_project.Chassis.Buttons.NMI")
+
 set(RESET_DBUS_OBJECT_NAME "xyz/openbmc_project/Chassis/Buttons/Reset")
 set(RESET_DBUS_INTF_NAME "xyz.openbmc_project.Chassis.Buttons.Reset")
 
@@ -22,11 +25,13 @@ set(ID_DBUS_OBJECT_NAME "xyz/openbmc_project/Chassis/Buttons/ID")
 set(ID_DBUS_INTF_NAME "xyz.openbmc_project.Chassis.Buttons.ID")
 
 add_definitions(-DPOWER_DBUS_OBJECT_NAME="/${POWER_DBUS_OBJECT_NAME}0")
+add_definitions(-DNMI_DBUS_OBJECT_NAME="/${NMI_DBUS_OBJECT_NAME}0")
 add_definitions(-DRESET_DBUS_OBJECT_NAME="/${RESET_DBUS_OBJECT_NAME}0")
 add_definitions(-DID_DBUS_OBJECT_NAME="/${ID_DBUS_OBJECT_NAME}0")
 
 set(SRC_FILES
     src/power_button.cpp
+    src/nmi_button.cpp
     src/reset_button.cpp
     src/id_button.cpp
     src/main.cpp

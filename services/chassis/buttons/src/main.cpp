@@ -16,6 +16,7 @@
 
 #include "reset_button.hpp"
 #include "power_button.hpp"
+#include "nmi_button.hpp"
 #include "id_button.hpp"
 
 int main(int argc, char *argv[])
@@ -43,6 +44,7 @@ int main(int argc, char *argv[])
     bus.request_name("xyz.openbmc_project.Chassis.Buttons");
 
     PowerButton powerButton{bus, POWER_DBUS_OBJECT_NAME};
+    NmiButton nmiButton{bus, NMI_DBUS_OBJECT_NAME};
     ResetButton resetButton{bus, RESET_DBUS_OBJECT_NAME};
     IDButton idButton{bus, ID_DBUS_OBJECT_NAME};
 
