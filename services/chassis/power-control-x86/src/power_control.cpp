@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 */
+#include <filesystem>
 #include <boost/process/child.hpp>
 #include <systemd/sd-journal.h>
 #include "power_control.hpp"
@@ -135,6 +136,30 @@ PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
                            phosphor::watchdog::EventPtr event) :
     sdbusplus::server::object_t<pwr_control>(bus, path),
     bus(bus), timer(event, std::bind(&PowerControl::timeOutHandler, this)),
+    powerButtonPressedSignal(
+        bus,
+        sdbusplus::bus::match::rules::type::signal() +
+            sdbusplus::bus::match::rules::member("Pressed") +
+            sdbusplus::bus::match::rules::path(powerButtonPath) +
+            sdbusplus::bus::match::rules::interface(powerButtonIntf),
+        [this](sdbusplus::message::message& msg) {
+            phosphor::logging::log<phosphor::logging::level::INFO>(
+                "powerButtonPressed callback function is called...");
+            this->powerButtonPressed = true;
+            return;
+        }),
+    resetButtonPressedSignal(
+        bus,
+        sdbusplus::bus::match::rules::type::signal() +
+            sdbusplus::bus::match::rules::member("Pressed") +
+            sdbusplus::bus::match::rules::path(resetButtonPath) +
+            sdbusplus::bus::match::rules::interface(resetButtonIntf),
+        [this](sdbusplus::message::message& msg) {
+            phosphor::logging::log<phosphor::logging::level::INFO>(
+                "resetButtonPressed callback function is called...");
+            this->resetButtonPressed = true;
+            return;
+        }),
     pgoodChangedSignal(
         bus,
         sdbusplus::bus::match::rules::type::signal() +
@@ -165,8 +190,25 @@ PowerControl::PowerControl(sdbusplus::bus::bus& bus, const char* path,
     int ret = 0;
 
     this->ACOnLogged = false;
-    this->state(pgood);
+    powerButtonPressed = false;
+    resetButtonPressed = false;
     this->pgood(pgood);
+
+    if (pgood)
+    {
+        if (this->postComplete())
+        {
+            this->state(powerStateOn);
+        }
+        else
+        {
+            this->state(powerStateReset);
+        }
+    }
+    else
+    {
+        this->state(powerStateOff);
+    }
 
     timer.start(std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::milliseconds(pollingIntervalMs)));
@@ -235,7 +277,10 @@ void PowerControl::powerGoodPropertyHandler(
         {
             phosphor::logging::log<phosphor::logging::level::INFO>(
                 value ? "PSGOOD" : "!PSGOOD");
-            this->state(value);
+
+            phosphor::logging::log<phosphor::logging::level::INFO>(
+                this->postComplete() ? "POST" : "!POST");
+
             this->pgood(value);
 
             if (value)
@@ -265,6 +310,9 @@ void PowerControl::postCompletePropertyHandler(
         {
             phosphor::logging::log<phosphor::logging::level::INFO>(
                 value ? "POST" : "!POST");
+            phosphor::logging::log<phosphor::logging::level::INFO>(
+                this->pgood() ? "PSGOOD" : "!PSGOOD");
+
             this->postComplete(value);
         }
     }
@@ -305,6 +353,7 @@ int32_t PowerControl::triggerReset()
 
 int32_t PowerControl::setPowerState(int32_t newState)
 {
+    bool forcePowerOff = false;
     int ret = 0;
     int count = 0;
     char buf = '0';
@@ -319,62 +368,119 @@ int32_t PowerControl::setPowerState(int32_t newState)
     phosphor::logging::log<phosphor::logging::level::INFO>(
         "setPowerState", phosphor::logging::entry("NEWSTATE=%d", newState));
 
-    if (state() == newState)
+    if (std::filesystem::exists(forceOffFlagPath))
     {
-        phosphor::logging::log<phosphor::logging::level::INFO>(
-            "Same powerstate",
-            phosphor::logging::entry("NEWSTATE=%d", newState));
-        return 0;
+        phosphor::logging::log<phosphor::logging::level::INFO>("ForceOffFlag");
+        forcePowerOff = true;
+    }
+    else
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>("!ForceOffFlag");
+        forcePowerOff = false;
     }
 
-    state(newState);
-
-    if (powerStateReset == newState)
+    switch (newState)
     {
-        phosphor::logging::log<phosphor::logging::level::INFO>(
-            "setPowerState system reset");
-        triggerReset();
-        return 0;
-    }
-
-    auto disable = DisablePassthrough();
-
-    // Set GpipDaemon::Power_UP Value property to change host power state.
-    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Direction",
-                          std::string("out"));
-    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Value", true);
-
-    phosphor::logging::log<phosphor::logging::level::INFO>(
-        "setPowerState switch power state");
-    std::this_thread::sleep_for(std::chrono::milliseconds(powerPulseTimeMs));
-    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Value", false);
-
-    if (0 == newState)
-    {
-
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(powerPulseTimeMs));
-        if (1 == pgood())
-        { // still on, force off!
-            phosphor::logging::log<phosphor::logging::level::INFO>(
-                "Perform force power off");
-            count = 0;
-            do
+        case powerStateReset:
+            if (this->resetButtonPressed)
             {
-                if (count++ > 5)
+                phosphor::logging::log<phosphor::logging::level::INFO>(
+                    "RESET button pressed, using pass-through");
+            }
+            else
+            {
+                // trigger the reset gpio signal
+                phosphor::logging::log<phosphor::logging::level::INFO>(
+                    "setPowerState system reset");
+
+                // make sure the state property is changed, host-state-manager
+                // use this dbus property changed signal to get restart cause
+                if (newState == state())
                 {
-                    phosphor::logging::log<phosphor::logging::level::ERR>(
-                        "forcePowerOff error!");
-                    throw sdbusplus::xyz::openbmc_project::Chassis::Common::
-                        Error::IOError();
+                    phosphor::logging::log<phosphor::logging::level::INFO>(
+                        "Make sure reset state change");
+                    state(powerStateMax);
                 }
-                ret = forcePowerOff();
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(pollingIntervalMs));
-            } while (ret != 0);
-        }
+                state(newState);
+                triggerReset();
+            }
+            break;
+        case powerStateOn:
+        case powerStateOff:
+            if (this->powerButtonPressed)
+            {
+                phosphor::logging::log<phosphor::logging::level::INFO>(
+                    "POWER button pressed, using pass-through");
+            }
+            else
+            {
+                // trigger the power_up gpio signal
+                // make sure the state property is changed, host-state-manager
+                // use this dbus property changed signal to get restart cause
+                if (newState == state())
+                {
+                    phosphor::logging::log<phosphor::logging::level::INFO>(
+                        "Make sure ON/OFF state change");
+                    state(powerStateMax);
+                }
+                state(newState);
+
+                // check if it is on or off
+                if (pgood())
+                {
+                    phosphor::logging::log<phosphor::logging::level::INFO>(
+                        "setPowerState PGOOD");
+                }
+                else
+                {
+                    phosphor::logging::log<phosphor::logging::level::INFO>(
+                        "setPowerState !PGOOD");
+                }
+
+                if ((powerStateOff == newState) && (!pgood()))
+                {
+                    phosphor::logging::log<phosphor::logging::level::INFO>(
+                        "OFF already");
+                }
+                else if ((powerStateOn == newState) && (pgood()))
+                {
+                    phosphor::logging::log<phosphor::logging::level::INFO>(
+                        "ON already");
+                }
+                else
+                {
+                    auto disable = DisablePassthrough();
+                    // Set GpipDaemon::Power_UP Value property to change host
+                    // power state.
+                    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath,
+                                          "Direction", std::string("out"));
+                    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Value",
+                                          true);
+
+                    phosphor::logging::log<phosphor::logging::level::INFO>(
+                        "setPowerState switch power state");
+
+                    if (forcePowerOff && (powerStateOff == newState))
+                    {
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(forceOffPulseTimeMs));
+                    }
+                    else
+                    {
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(powerPulseTimeMs));
+                    }
+                    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Value",
+                                          false);
+                }
+            }
+            break;
+        default:
+            break;
     }
 
+    this->resetButtonPressed = false;
+    this->powerButtonPressed = false;
     return 0;
 }
 

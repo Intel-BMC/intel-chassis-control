@@ -23,6 +23,10 @@
 #include <systemd/sd-event.h>
 #include <systemd/sd-id128.h>
 
+const static constexpr char *chassisPowerOffTarget =
+    "obmc-chassis-poweroff@0.target";
+const static constexpr char *hostStartTarget = "obmc-host-start@0.target";
+
 const static constexpr char *powerControlPath =
     "/xyz/openbmc_project/Chassis/Control/Power0";
 const static constexpr char *powerControlInterface =
@@ -80,19 +84,15 @@ struct ChassisControl
             [this](sdbusplus::message::message &msg) {
                 phosphor::logging::log<phosphor::logging::level::INFO>(
                     "powerButtonPressed callback function is called...");
-                uint8_t state = static_cast<uint8_t>(this->getPowerState());
-                if (POWER_ON == state)
+                int32_t pgood = 0;
+                this->getPGOODState(pgood);
+                if (pgood)
                 {
                     this->powerOff();
                 }
-                else if (POWER_OFF == state)
-                {
-                    this->powerOn();
-                }
                 else
                 {
-                    phosphor::logging::log<phosphor::logging::level::ERR>(
-                        "UNKNOWN power state");
+                    this->powerOn();
                 }
 
                 sd_journal_send("MESSAGE=%s", "Power Button Pressed",
@@ -110,7 +110,17 @@ struct ChassisControl
             [this](sdbusplus::message::message &msg) {
                 phosphor::logging::log<phosphor::logging::level::INFO>(
                     "resetButtonPressed callback function is called...");
-                this->softReboot();
+                int32_t pgood = 0;
+                this->getPGOODState(pgood);
+                if (pgood)
+                {
+                    this->softReboot();
+                }
+                else
+                {
+                    phosphor::logging::log<phosphor::logging::level::WARNING>(
+                        "OFF state Cannot reset");
+                }
 
                 sd_journal_send("MESSAGE=%s", "Reset Button Pressed",
                                 "PRIORITY=%i", LOG_INFO,
@@ -173,16 +183,54 @@ struct ChassisControl
                 {
                     auto key = t.first;
                     auto value = t.second;
+
                     if (key == "pgood")
                     {
                         int32_t pgood =
                             sdbusplus::message::variant_ns::get<int32_t>(value);
                         if (!pgood)
                         {
+
+                            // check if the systemd service is in correct state
                             phosphor::logging::log<
                                 phosphor::logging::level::INFO>(
-                                "pgood signal changed to low, powerOff");
-                            this->powerOff();
+                                "pgood changed to low, check on service");
+                            if (!this->stateActive(chassisPowerOffTarget))
+                            {
+                                phosphor::logging::log<
+                                    phosphor::logging::level::INFO>(
+                                    "Service is inactive, start poweroff "
+                                    "service");
+                                this->powerOff();
+                            }
+                            else
+                            {
+                                phosphor::logging::log<
+                                    phosphor::logging::level::INFO>(
+                                    "Service is active already, no need to "
+                                    "start");
+                            }
+                        }
+                        else
+                        {
+                            phosphor::logging::log<
+                                phosphor::logging::level::INFO>(
+                                "pgood changed to High, check on service");
+                            if (!this->stateActive(hostStartTarget))
+                            {
+                                phosphor::logging::log<
+                                    phosphor::logging::level::INFO>(
+                                    "Service is inactive, start poweron "
+                                    "service");
+                                this->powerOn();
+                            }
+                            else
+                            {
+                                phosphor::logging::log<
+                                    phosphor::logging::level::INFO>(
+                                    "Service is active already, no need to "
+                                    "start");
+                            }
                         }
                         break;
                     }
@@ -229,6 +277,8 @@ struct ChassisControl
     std::string uUID(std::string value) override;
 
   private:
+    bool stateActive(const std::string &target);
+    int32_t getPGOODState(int32_t &pgood);
     int32_t startSystemdUnit(const std::string &unit);
     sdbusplus::bus::bus &mBus;
 
