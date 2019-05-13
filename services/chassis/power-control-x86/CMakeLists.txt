@@ -53,5 +53,6 @@ target_link_libraries(${PROJECT_NAME} ${DBUSINTERFACE_LIBRARIES}
                       chassisi2c)
 target_link_libraries(${PROJECT_NAME} "${SDBUSPLUSPLUS_LIBRARIES} -lstdc++fs")
 target_link_libraries (${PROJECT_NAME} i2c)
+target_link_libraries (${PROJECT_NAME} gpiod)
 
 install (TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})

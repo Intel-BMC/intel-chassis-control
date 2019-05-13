@@ -1,5 +1,5 @@
 /*
-// Copyright (c) 2018 Intel Corporation
+// Copyright (c) 2018-2019 Intel Corporation
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,27 +14,9 @@
 // limitations under the License.
 */
 #include <filesystem>
-#include <boost/process/child.hpp>
+#include <gpiod.h>
 #include <systemd/sd-journal.h>
 #include "power_control.hpp"
-
-constexpr const char* passthroughPath = "/usr/bin/set-passthrough.sh";
-
-struct DisablePassthrough
-{
-
-    DisablePassthrough()
-    {
-        // todo: use driver instead of /dev/mem
-        boost::process::child c(passthroughPath, "0");
-        c.wait();
-    }
-    ~DisablePassthrough()
-    {
-        boost::process::child c(passthroughPath, "1");
-        c.wait();
-    }
-};
 
 class LpcSioDevFile
 {
@@ -333,20 +315,29 @@ int32_t PowerControl::forcePowerOff()
 
 int32_t PowerControl::triggerReset()
 {
-    int ret = 0;
-    int count = 0;
-    char buf = '0';
-
     phosphor::logging::log<phosphor::logging::level::INFO>("triggerReset");
 
-    auto disable = DisablePassthrough();
-    // Set GpipDaemon::Power_UP Value property to change host power state.
-    setGpioDaemonProperty(bus, gpioDaemonResetOutPath, "Direction",
-                          std::string("out"));
-    setGpioDaemonProperty(bus, gpioDaemonResetOutPath, "Value", true);
+    // Find the RESET_OUT GPIO line
+    struct gpiod_line* resetOutTmp = gpiod_line_find("RESET_OUT");
+    if (resetOutTmp == NULL)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to find the RESET_OUT line.");
+        return -1;
+    }
+    std::unique_ptr<gpiod_line, decltype(&gpiod_line_close_chip)> resetOut(
+        resetOutTmp, gpiod_line_close_chip);
+    resetOutTmp = nullptr;
+
+    // Request RESET_OUT as asserted
+    if (gpiod_line_request_output(resetOut.get(), __FUNCTION__, 0) < 0)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to request RESET_OUT output\n");
+        return -1;
+    }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(resetPulseTimeMs));
-    setGpioDaemonProperty(bus, gpioDaemonResetOutPath, "Value", false);
 
     return 0;
 }
@@ -356,7 +347,6 @@ int32_t PowerControl::setPowerState(int32_t newState)
     bool forcePowerOff = false;
     int ret = 0;
     int count = 0;
-    char buf = '0';
 
     if (newState < 0 || newState >= powerStateMax)
     {
@@ -449,13 +439,28 @@ int32_t PowerControl::setPowerState(int32_t newState)
                 }
                 else
                 {
-                    auto disable = DisablePassthrough();
-                    // Set GpipDaemon::Power_UP Value property to change host
-                    // power state.
-                    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath,
-                                          "Direction", std::string("out"));
-                    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Value",
-                                          true);
+                    // Find the POWER_OUT GPIO line
+                    struct gpiod_line* powerOutTmp =
+                        gpiod_line_find("POWER_OUT");
+                    if (powerOutTmp == NULL)
+                    {
+                        phosphor::logging::log<phosphor::logging::level::ERR>(
+                            "Failed to find the POWER_OUT line.");
+                        return -1;
+                    }
+                    std::unique_ptr<gpiod_line,
+                                    decltype(&gpiod_line_close_chip)>
+                        powerOut(powerOutTmp, gpiod_line_close_chip);
+                    powerOutTmp = nullptr;
+
+                    // Request POWER_OUT as asserted
+                    if (gpiod_line_request_output(powerOut.get(), __FUNCTION__,
+                                                  0) < 0)
+                    {
+                        phosphor::logging::log<phosphor::logging::level::ERR>(
+                            "Failed to request POWER_OUT output\n");
+                        return -1;
+                    }
 
                     phosphor::logging::log<phosphor::logging::level::INFO>(
                         "setPowerState switch power state");
@@ -470,8 +475,6 @@ int32_t PowerControl::setPowerState(int32_t newState)
                         std::this_thread::sleep_for(
                             std::chrono::milliseconds(powerPulseTimeMs));
                     }
-                    setGpioDaemonProperty(bus, gpioDaemonPowerUpPath, "Value",
-                                          false);
                 }
             }
             break;
