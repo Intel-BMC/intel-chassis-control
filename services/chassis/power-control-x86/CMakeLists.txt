@@ -3,56 +3,30 @@ project(power-control CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CMAKE_INSTALL_RPATH ${CMAKE_INSTALL_RPATH}
-    ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-include(GNUInstallDirs)
+add_definitions(-DBOOST_ERROR_CODE_HEADER_ONLY)
+add_definitions(-DBOOST_SYSTEM_NO_DEPRECATED)
+add_definitions(-DBOOST_ALL_NO_LIB)
+add_definitions(-DBOOST_NO_RTTI)
+add_definitions(-DBOOST_NO_TYPEID)
+add_definitions(-DBOOST_ASIO_DISABLE_THREADS)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inc)
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
-
-set(DBUS_OBJECT_NAME "xyz/openbmc_project/Chassis/Control/Power")
-set(DBUS_INTF_NAME "xyz.openbmc_project.Chassis.Control.Power")
-
-add_definitions(-DDBUS_OBJECT_NAME="/${DBUS_OBJECT_NAME}0")
-add_definitions(-DDBUS_INTF_NAME="${DBUS_INTF_NAME}")
-set(SRC_FILES
-    src/power_control.cpp
-    src/timer.cpp
-    src/main.cpp
-)
-
-# import sdbusplus
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDBUSPLUSPLUS sdbusplus REQUIRED)
-include_directories(${SDBUSPLUSPLUS_INCLUDE_DIRS})
-link_directories(${SDBUSPLUSPLUS_LIBRARY_DIRS})
-find_program(SDBUSPLUSPLUS sdbus++)
-
-# import phosphor-logging
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LOGGING phosphor-logging REQUIRED)
-include_directories(${LOGGING_INCLUDE_DIRS})
-link_directories(${LOGGING_LIBRARY_DIRS})
-
-# phosphor-dbus-interfaces
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(DBUSINTERFACE phosphor-dbus-interfaces REQUIRED)
-include_directories(${DBUSINTERFACE_INCLUDE_DIRS})
-link_directories(${DBUSINTERFACE_LIBRARY_DIRS})
-
-include_directories (${Boost_INCLUDE_DIRS})
-
-option (EXTERNAL_PROJECT "Enable Cloning External Projects" OFF)
-if (EXTERNAL_PROJECT)
-    include_directories (${CMAKE_CURRENT_SOURCE_DIR}/inc/non-yocto)
-endif()
+set(SRC_FILES src/power_control.cpp)
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
-target_link_libraries(${PROJECT_NAME} ${DBUSINTERFACE_LIBRARIES}
-                      chassisi2c)
-target_link_libraries(${PROJECT_NAME} "${SDBUSPLUSPLUS_LIBRARIES} -lstdc++fs")
-target_link_libraries (${PROJECT_NAME} i2c)
-target_link_libraries (${PROJECT_NAME} gpiod)
+target_link_libraries(${PROJECT_NAME} -lstdc++fs)
+target_link_libraries(${PROJECT_NAME} chassisi2c)
+target_link_libraries(${PROJECT_NAME} i2c)
+target_link_libraries(${PROJECT_NAME} gpiod)
+target_link_libraries(${PROJECT_NAME} systemd)
+target_link_libraries(${PROJECT_NAME} sdbusplus)
 
-install (TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-rtti")
+
+set(
+  SERVICE_FILES
+  ${PROJECT_SOURCE_DIR}/service_files/xyz.openbmc_project.Chassis.Control.Power.service
+  )
+install(FILES ${SERVICE_FILES} DESTINATION /lib/systemd/system/)
