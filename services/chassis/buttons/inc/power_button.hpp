@@ -15,13 +15,15 @@
 */
 
 #pragma once
-#include <phosphor-logging/elog-errors.hpp>
-#include <unistd.h>
-#include "xyz/openbmc_project/Chassis/Common/error.hpp"
-#include "xyz/openbmc_project/Chassis/Buttons/Power/server.hpp"
 #include "common.hpp"
+#include "xyz/openbmc_project/Chassis/Buttons/Power/server.hpp"
+#include "xyz/openbmc_project/Chassis/Common/error.hpp"
 
-const static constexpr char *gpioDaemonPowerButtonPath =
+#include <unistd.h>
+
+#include <phosphor-logging/elog-errors.hpp>
+
+const static constexpr char* gpioDaemonPowerButtonPath =
     "/xyz/openbmc_project/control/gpio/Power_Button";
 
 struct PowerButton
@@ -29,7 +31,7 @@ struct PowerButton
           sdbusplus::xyz::openbmc_project::Chassis::Buttons::server::Power>
 {
 
-    PowerButton(sdbusplus::bus::bus &bus, const char *path) :
+    PowerButton(sdbusplus::bus::bus& bus, const char* path) :
         sdbusplus::server::object::object<
             sdbusplus::xyz::openbmc_project::Chassis::Buttons::server::Power>(
             bus, path),
@@ -42,7 +44,7 @@ struct PowerButton
                 sdbusplus::bus::match::rules::interface(propertiesIntf) +
                 sdbusplus::bus::match::rules::argN(
                     0, "xyz.openbmc_project.Control.Gpio"),
-            [this](sdbusplus::message::message &msg) {
+            [this](sdbusplus::message::message& msg) {
                 phosphor::logging::log<phosphor::logging::level::INFO>(
                     "PowerButton propertiesChangedSignal callback function is "
                     "called...");
@@ -86,6 +88,6 @@ struct PowerButton
     void simLongPress() override;
 
   private:
-    sdbusplus::bus::bus &bus;
+    sdbusplus::bus::bus& bus;
     sdbusplus::bus::match_t propertiesChangedSignal;
 };

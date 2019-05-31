@@ -14,19 +14,19 @@
 // limitations under the License.
 */
 
-#include "reset_button.hpp"
-#include "power_button.hpp"
-#include "nmi_button.hpp"
 #include "id_button.hpp"
+#include "nmi_button.hpp"
+#include "power_button.hpp"
+#include "reset_button.hpp"
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     int ret = 0;
 
     phosphor::logging::log<phosphor::logging::level::INFO>(
         "Start power button service...");
 
-    sd_event *event = nullptr;
+    sd_event* event = nullptr;
     ret = sd_event_default(&event);
     if (ret < 0)
     {
@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
                 phosphor::logging::entry("RET=%d", ret));
         }
     }
-    catch (std::exception &e)
+    catch (std::exception& e)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(e.what());
         ret = -1;

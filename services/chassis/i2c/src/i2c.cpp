@@ -14,12 +14,14 @@
 // limitations under the License.
 */
 
-#include <fcntl.h>
-#include <phosphor-logging/elog-errors.hpp>
-#include <unistd.h>
-#include <xyz/openbmc_project/Common/error.hpp>
-#include <sys/ioctl.h>
 #include "i2c.hpp"
+
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+#include <phosphor-logging/elog-errors.hpp>
+#include <xyz/openbmc_project/Common/error.hpp>
 
 // TODO Add 16-bit I2C support in the furture
 int i2cSet(uint8_t bus, uint8_t slaveAddr, uint8_t regAddr, uint8_t value)

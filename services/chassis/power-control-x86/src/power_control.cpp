@@ -13,10 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 */
-#include <filesystem>
+#include "power_control.hpp"
+
 #include <gpiod.h>
 #include <systemd/sd-journal.h>
-#include "power_control.hpp"
+
+#include <filesystem>
 
 class LpcSioDevFile
 {

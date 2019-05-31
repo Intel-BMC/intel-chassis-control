@@ -15,36 +15,38 @@
 */
 
 #pragma once
-#include <xyz/openbmc_project/Common/UUID/server.hpp>
 #include "xyz/openbmc_project/Chassis/Common/error.hpp"
 #include "xyz/openbmc_project/Chassis/Control/Chassis/server.hpp"
-#include <phosphor-logging/elog-errors.hpp>
-#include <systemd/sd-journal.h>
+
 #include <systemd/sd-event.h>
 #include <systemd/sd-id128.h>
+#include <systemd/sd-journal.h>
 
-const static constexpr char *chassisPowerOffTarget =
+#include <phosphor-logging/elog-errors.hpp>
+#include <xyz/openbmc_project/Common/UUID/server.hpp>
+
+const static constexpr char* chassisPowerOffTarget =
     "obmc-chassis-poweroff@0.target";
-const static constexpr char *hostStartTarget = "obmc-host-start@0.target";
+const static constexpr char* hostStartTarget = "obmc-host-start@0.target";
 
-const static constexpr char *powerControlPath =
+const static constexpr char* powerControlPath =
     "/xyz/openbmc_project/Chassis/Control/Power0";
-const static constexpr char *powerControlInterface =
+const static constexpr char* powerControlInterface =
     "xyz.openbmc_project.Chassis.Control.Power";
-const static constexpr char *idButtonPath =
+const static constexpr char* idButtonPath =
     "/xyz/openbmc_project/Chassis/Buttons/ID0";
-const static constexpr char *idButtonInterface =
+const static constexpr char* idButtonInterface =
     "xyz.openbmc_project.Chassis.Buttons.ID";
 
-const static constexpr char *POWER_BUTTON_PATH =
+const static constexpr char* POWER_BUTTON_PATH =
     "/xyz/openbmc_project/Chassis/Buttons/Power0";
-const static constexpr char *POWER_BUTTON_INTF =
+const static constexpr char* POWER_BUTTON_INTF =
     "xyz.openbmc_project.Chassis.Buttons.Power";
-const static constexpr char *RESET_BUTTON_PATH =
+const static constexpr char* RESET_BUTTON_PATH =
     "/xyz/openbmc_project/Chassis/Buttons/Reset0";
-const static constexpr char *RESET_BUTTON_INTF =
+const static constexpr char* RESET_BUTTON_INTF =
     "xyz.openbmc_project.Chassis.Buttons.Reset";
-const static constexpr char *DEVICE_UUID_PATH =
+const static constexpr char* DEVICE_UUID_PATH =
     "/xyz/openbmc_project/inventory/system/chassis/motherboard/bmc";
 
 const static uint8_t POWER_OFF = 0;
@@ -52,7 +54,7 @@ const static uint8_t POWER_ON = 1;
 
 struct EventDeleter
 {
-    void operator()(sd_event *event) const
+    void operator()(sd_event* event) const
     {
         event = sd_event_unref(event);
     }
@@ -66,8 +68,8 @@ struct ChassisControl
       sdbusplus::server::object_t<
           sdbusplus::xyz::openbmc_project::Chassis::Control::server::Chassis>
 {
-    ChassisControl(sdbusplus::bus::bus &bus, const char *path,
-                   EventPtr &event) :
+    ChassisControl(sdbusplus::bus::bus& bus, const char* path,
+                   EventPtr& event) :
         sdbusplus::server::object::object<
             sdbusplus::xyz::openbmc_project::Common::server::UUID>(
             bus, DEVICE_UUID_PATH),
@@ -81,7 +83,7 @@ struct ChassisControl
                 sdbusplus::bus::match::rules::member("Pressed") +
                 sdbusplus::bus::match::rules::path(POWER_BUTTON_PATH) +
                 sdbusplus::bus::match::rules::interface(POWER_BUTTON_INTF),
-            [this](sdbusplus::message::message &msg) {
+            [this](sdbusplus::message::message& msg) {
                 phosphor::logging::log<phosphor::logging::level::INFO>(
                     "powerButtonPressed callback function is called...");
                 int32_t pgood = 0;
@@ -107,7 +109,7 @@ struct ChassisControl
                 sdbusplus::bus::match::rules::member("Pressed") +
                 sdbusplus::bus::match::rules::path(RESET_BUTTON_PATH) +
                 sdbusplus::bus::match::rules::interface(RESET_BUTTON_INTF),
-            [this](sdbusplus::message::message &msg) {
+            [this](sdbusplus::message::message& msg) {
                 phosphor::logging::log<phosphor::logging::level::INFO>(
                     "resetButtonPressed callback function is called...");
                 int32_t pgood = 0;
@@ -134,7 +136,7 @@ struct ChassisControl
                 sdbusplus::bus::match::rules::member("Pressed") +
                 sdbusplus::bus::match::rules::path(idButtonPath) +
                 sdbusplus::bus::match::rules::interface(idButtonInterface),
-            [this](sdbusplus::message::message &msg) {
+            [this](sdbusplus::message::message& msg) {
                 bool status = false;
                 int8_t ret = 0;
                 phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -166,7 +168,7 @@ struct ChassisControl
             bus,
             sdbusplus::bus::match::rules::propertiesChanged(
                 powerControlPath, powerControlInterface),
-            [this](sdbusplus::message::message &msg) {
+            [this](sdbusplus::message::message& msg) {
                 phosphor::logging::log<phosphor::logging::level::INFO>(
                     "pgoodPropSignal callback function is called...");
 
@@ -179,7 +181,7 @@ struct ChassisControl
                 std::string iface;
                 msg.read(iface, props, inval);
 
-                for (const auto &t : props)
+                for (const auto& t : props)
                 {
                     auto key = t.first;
                     auto value = t.second;
@@ -277,15 +279,15 @@ struct ChassisControl
     std::string uUID(std::string value) override;
 
   private:
-    bool stateActive(const std::string &target);
-    int32_t getPGOODState(int32_t &pgood);
-    int32_t startSystemdUnit(const std::string &unit);
-    sdbusplus::bus::bus &mBus;
+    bool stateActive(const std::string& target);
+    int32_t getPGOODState(int32_t& pgood);
+    int32_t startSystemdUnit(const std::string& unit);
+    sdbusplus::bus::bus& mBus;
 
     sdbusplus::bus::match_t powerButtonPressedSignal;
     sdbusplus::bus::match_t resetButtonPressedSignal;
     sdbusplus::bus::match_t idButtonPressedSignal;
     sdbusplus::bus::match_t pgoodPropSignal;
-    int8_t getIDStatus(bool *status);
+    int8_t getIDStatus(bool* status);
     int8_t setIDStatus(bool status);
 };

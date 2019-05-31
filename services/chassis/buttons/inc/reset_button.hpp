@@ -15,13 +15,15 @@
 */
 
 #pragma once
-#include <phosphor-logging/elog-errors.hpp>
-#include <unistd.h>
-#include "xyz/openbmc_project/Chassis/Common/error.hpp"
-#include "xyz/openbmc_project/Chassis/Buttons/Reset/server.hpp"
 #include "common.hpp"
+#include "xyz/openbmc_project/Chassis/Buttons/Reset/server.hpp"
+#include "xyz/openbmc_project/Chassis/Common/error.hpp"
 
-const static constexpr char *gpioDaemonResetButtonPath =
+#include <unistd.h>
+
+#include <phosphor-logging/elog-errors.hpp>
+
+const static constexpr char* gpioDaemonResetButtonPath =
     "/xyz/openbmc_project/control/gpio/Reset_Button";
 
 struct ResetButton
@@ -29,7 +31,7 @@ struct ResetButton
           sdbusplus::xyz::openbmc_project::Chassis::Buttons::server::Reset>
 {
 
-    ResetButton(sdbusplus::bus::bus &bus, const char *path) :
+    ResetButton(sdbusplus::bus::bus& bus, const char* path) :
         sdbusplus::server::object::object<
             sdbusplus::xyz::openbmc_project::Chassis::Buttons::server::Reset>(
             bus, path),
@@ -42,7 +44,7 @@ struct ResetButton
                 sdbusplus::bus::match::rules::interface(propertiesIntf) +
                 sdbusplus::bus::match::rules::argN(
                     0, "xyz.openbmc_project.Control.Gpio"),
-            [this](sdbusplus::message::message &msg) {
+            [this](sdbusplus::message::message& msg) {
                 phosphor::logging::log<phosphor::logging::level::INFO>(
                     "Reset button propertiesChangedSignal callback function is "
                     "called...");
@@ -85,6 +87,6 @@ struct ResetButton
     void simPress() override;
 
   private:
-    sdbusplus::bus::bus &bus;
+    sdbusplus::bus::bus& bus;
     sdbusplus::bus::match_t propertiesChangedSignal;
 };

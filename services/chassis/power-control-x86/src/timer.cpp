@@ -15,12 +15,14 @@
  */
 
 #include "timer.hpp"
+
 #include <systemd/sd-event.h>
+
+#include <chrono>
 #include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/elog.hpp>
 #include <phosphor-logging/log.hpp>
 #include <xyz/openbmc_project/Common/error.hpp>
-#include <chrono>
 namespace phosphor
 {
 namespace watchdog

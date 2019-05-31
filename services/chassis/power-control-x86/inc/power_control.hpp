@@ -15,16 +15,18 @@
 */
 
 #pragma once
+#include "i2c.hpp"
+#include "timer.hpp"
+
 #include <fcntl.h>
 #include <linux/aspeed-lpc-sio.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
+
 #include <phosphor-logging/elog-errors.hpp>
 #include <xyz/openbmc_project/Chassis/Common/error.hpp>
 #include <xyz/openbmc_project/Chassis/Control/Power/server.hpp>
 #include <xyz/openbmc_project/Common/error.hpp>
-#include "i2c.hpp"
-#include <sys/ioctl.h>
-#include "timer.hpp"
 
 static constexpr size_t pollingIntervalMs = 500;
 

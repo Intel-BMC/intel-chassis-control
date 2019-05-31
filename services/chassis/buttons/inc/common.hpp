@@ -15,13 +15,17 @@
 */
 
 #pragma once
+#include <systemd/sd-event.h>
+
+#include <memory>
+
 struct EventDeleter
 {
-    void operator()(sd_event *event) const
+    void operator()(sd_event* event) const
     {
         event = sd_event_unref(event);
     }
 };
 
 using EventPtr = std::unique_ptr<sd_event, EventDeleter>;
-const static constexpr char *propertiesIntf = "org.freedesktop.DBus.Properties";
+const static constexpr char* propertiesIntf = "org.freedesktop.DBus.Properties";

@@ -16,6 +16,7 @@
 #pragma once
 
 #include <systemd/sd-event.h>
+
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -87,7 +88,8 @@ class Timer
     /** @brief Enables / disables the timer.
      *         <T> is an integral constant boolean
      */
-    template <typename T> void setEnabled()
+    template <typename T>
+    void setEnabled()
     {
         constexpr auto type = T::value ? SD_EVENT_ONESHOT : SD_EVENT_OFF;
         setEnabled(type);
