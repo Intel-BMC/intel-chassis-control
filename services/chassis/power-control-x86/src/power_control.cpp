@@ -374,7 +374,7 @@ static gpiod_line* requestGPIOEvents(
 
     gpioEventDescriptor.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [name, handler](const boost::system::error_code& ec) {
+        [name, handler](const boost::system::error_code ec) {
             if (ec)
             {
                 std::cerr << name << " fd handler error: " << ec.message()
@@ -421,7 +421,7 @@ static int setMaskedGPIOOutputForMs(struct gpiod_line* maskedGPIOLine,
     std::cerr << name << " set to " << std::to_string(value);
     gpioAssertTimer.expires_after(std::chrono::milliseconds(durationMs));
     gpioAssertTimer.async_wait(
-        [maskedGPIOLine, value, name](const boost::system::error_code& ec) {
+        [maskedGPIOLine, value, name](const boost::system::error_code ec) {
             // Set the masked GPIO line back to the opposite value
             if (gpiod_line_set_value(maskedGPIOLine, !value) < 0)
             {
@@ -466,7 +466,7 @@ static int setGPIOOutputForMs(const std::string_view name, const int value,
     }
     gpioAssertTimer.expires_after(std::chrono::milliseconds(durationMs));
     gpioAssertTimer.async_wait(
-        [gpioLine, name](const boost::system::error_code& ec) {
+        [gpioLine, name](const boost::system::error_code ec) {
             gpiod_line_close_chip(gpioLine);
             std::cerr << name << " released\n";
             if (ec)
@@ -502,7 +502,7 @@ static void forcePowerOff()
 
     // If the force off timer expires, then the PCH power-button override
     // failed, so attempt the Unconditional Powerdown SMBus command.
-    gpioAssertTimer.async_wait([](const boost::system::error_code& ec) {
+    gpioAssertTimer.async_wait([](const boost::system::error_code ec) {
         if (ec)
         {
             // operation_aborted is expected if timer is canceled before
@@ -539,7 +539,7 @@ static void gracefulPowerOffTimerStart()
     std::cerr << "Graceful power-off timer started\n";
     gracefulPowerOffTimer.expires_after(
         std::chrono::milliseconds(gracefulPowerOffTimeMs));
-    gracefulPowerOffTimer.async_wait([](const boost::system::error_code& ec) {
+    gracefulPowerOffTimer.async_wait([](const boost::system::error_code ec) {
         if (ec)
         {
             // operation_aborted is expected if timer is canceled before
@@ -561,7 +561,7 @@ static void powerCycleTimerStart()
 {
     std::cerr << "Power-cycle timer started\n";
     powerCycleTimer.expires_after(std::chrono::milliseconds(powerCycleTimeMs));
-    powerCycleTimer.async_wait([](const boost::system::error_code& ec) {
+    powerCycleTimer.async_wait([](const boost::system::error_code ec) {
         if (ec)
         {
             // operation_aborted is expected if timer is canceled before
@@ -585,7 +585,7 @@ static void psPowerOKWatchdogTimerStart()
     psPowerOKWatchdogTimer.expires_after(
         std::chrono::milliseconds(psPowerOKWatchdogTimeMs));
     psPowerOKWatchdogTimer.async_wait(
-        [](const boost::system::error_code& ec) {
+        [](const boost::system::error_code ec) {
             if (ec)
             {
                 // operation_aborted is expected if timer is canceled before
@@ -610,7 +610,7 @@ static void sioPowerGoodWatchdogTimerStart()
     sioPowerGoodWatchdogTimer.expires_after(
         std::chrono::milliseconds(sioPowerGoodWatchdogTimeMs));
     sioPowerGoodWatchdogTimer.async_wait(
-        [](const boost::system::error_code& ec) {
+        [](const boost::system::error_code ec) {
             if (ec)
             {
                 // operation_aborted is expected if timer is canceled before
@@ -871,7 +871,7 @@ static void powerStateGracefulTransitionToCycleOff(const Event event)
     }
 }
 
-static int getPFailStatus(unsigned int& data)
+static int getPFailStatus(unsigned int data)
 {
     struct sio_ioctl_data sioData;
     int ret = 0;
@@ -915,7 +915,7 @@ static void psPowerOKHandler()
     sendPowerControlEvent(powerControlEvent);
     psPowerOKEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code& ec) {
+        [](const boost::system::error_code ec) {
             if (ec)
             {
                 std::cerr << "power supply power OK handler error: "
@@ -945,7 +945,7 @@ static void sioPowerGoodHandler()
     sendPowerControlEvent(powerControlEvent);
     sioPowerGoodEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code& ec) {
+        [](const boost::system::error_code ec) {
             if (ec)
             {
                 std::cerr << "SIO power good handler error: " << ec.message()
@@ -972,7 +972,7 @@ static void sioOnControlHandler()
     std::cerr << "SIO_ONCONTROL value changed: " << sioOnControl << "\n";
     sioOnControlEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code& ec) {
+        [](const boost::system::error_code ec) {
             if (ec)
             {
                 std::cerr << "SIO ONCONTROL handler error: " << ec.message()
@@ -997,7 +997,7 @@ static void sioS5Handler()
     bool sioS5 = gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE;
     std::cerr << "SIO_S5 value changed: " << sioS5 << "\n";
     sioS5Event.async_wait(boost::asio::posix::stream_descriptor::wait_read,
-                          [](const boost::system::error_code& ec) {
+                          [](const boost::system::error_code ec) {
                               if (ec)
                               {
                                   std::cerr << "SIO S5 handler error: "
@@ -1037,7 +1037,7 @@ static void powerButtonHandler()
     }
     powerButtonEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code& ec) {
+        [](const boost::system::error_code ec) {
             if (ec)
             {
                 std::cerr << "power button handler error: " << ec.message()
@@ -1073,7 +1073,7 @@ static void resetButtonHandler()
     }
     resetButtonEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code& ec) {
+        [](const boost::system::error_code ec) {
             if (ec)
             {
                 std::cerr << "reset button handler error: " << ec.message()
@@ -1108,7 +1108,7 @@ static void nmiButtonHandler()
         nmiButtonIface->set_property("ButtonPressed", false);
     }
     nmiButtonEvent.async_wait(boost::asio::posix::stream_descriptor::wait_read,
-                              [](const boost::system::error_code& ec) {
+                              [](const boost::system::error_code ec) {
                                   if (ec)
                                   {
                                       std::cerr << "NMI button handler error: "
@@ -1133,7 +1133,7 @@ static void postCompleteHandler()
     std::cerr << "POST complete value changed: " << postComplete << "\n";
     postCompleteEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [](const boost::system::error_code& ec) {
+        [](const boost::system::error_code ec) {
             if (ec)
             {
                 std::cerr << "POST complete handler error: " << ec.message()
@@ -1355,7 +1355,7 @@ int main(int argc, char* argv[])
         "xyz.openbmc_project.Chassis.Buttons");
 
     power_control::powerButtonIface->register_property(
-        "ButtonMasked", false, [](const bool& requested, bool& current) {
+        "ButtonMasked", false, [](const bool requested, bool& current) {
             if (requested)
             {
                 if (power_control::powerButtonMask != nullptr)
@@ -1403,7 +1403,7 @@ int main(int argc, char* argv[])
         "xyz.openbmc_project.Chassis.Buttons");
 
     power_control::resetButtonIface->register_property(
-        "ButtonMasked", false, [](const bool& requested, bool& current) {
+        "ButtonMasked", false, [](const bool requested, bool& current) {
             if (requested)
             {
                 if (power_control::resetButtonMask != nullptr)
@@ -1451,7 +1451,7 @@ int main(int argc, char* argv[])
                                     "xyz.openbmc_project.Chassis.Buttons");
 
     power_control::nmiButtonIface->register_property(
-        "ButtonMasked", false, [](const bool& requested, bool& current) {
+        "ButtonMasked", false, [](const bool requested, bool& current) {
             if (power_control::nmiButtonMasked == requested)
             {
                 // NMI button mask is already set as requested, so no change
