@@ -33,6 +33,7 @@ static std::shared_ptr<sdbusplus::asio::dbus_interface> chassisIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> powerButtonIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> resetButtonIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> nmiButtonIface;
+static std::shared_ptr<sdbusplus::asio::dbus_interface> osIface;
 
 static struct gpiod_line* powerButtonMask = nullptr;
 static struct gpiod_line* resetButtonMask = nullptr;
@@ -1128,8 +1129,16 @@ static void postCompleteHandler()
                   << postCompleteEvent.native_handle() << "\n";
         return;
     }
-    bool postComplete = event.event_type == GPIOD_LINE_EVENT_RISING_EDGE;
+    bool postComplete = event.event_type == GPIOD_LINE_EVENT_FALLING_EDGE;
     std::cerr << "POST complete value changed: " << postComplete << "\n";
+    if (postComplete)
+    {
+        osIface->set_property("OperatingSystemState", std::string("Standby"));
+    }
+    else
+    {
+        osIface->set_property("OperatingSystemState", std::string("Inactive"));
+    }
     postCompleteEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
         [](const boost::system::error_code ec) {
@@ -1153,6 +1162,8 @@ int main(int argc, char* argv[])
     // Request all the dbus names
     power_control::conn->request_name("xyz.openbmc_project.State.Host");
     power_control::conn->request_name("xyz.openbmc_project.State.Chassis");
+    power_control::conn->request_name(
+        "xyz.openbmc_project.State.OperatingSystem");
     power_control::conn->request_name("xyz.openbmc_project.Chassis.Buttons");
 
     // Request PS_PWROK GPIO events
@@ -1484,6 +1495,26 @@ int main(int argc, char* argv[])
                                                      nmiButtonPressed);
 
     power_control::nmiButtonIface->initialize();
+
+    // OS State Service
+    sdbusplus::asio::object_server osServer =
+        sdbusplus::asio::object_server(power_control::conn);
+
+    // OS State Interface
+    power_control::osIface = osServer.add_interface(
+        "/xyz/openbmc_project/state/os",
+        "xyz.openbmc_project.State.OperatingSystem.Status");
+
+    // Get the initial OS state based on POST complete
+    //      0: Asserted, OS state is "Standby" (ready to boot)
+    //      1: De-Asserted, OS state is "Inactive"
+    std::string osState =
+        gpiod_line_get_value(postCompleteLine) > 0 ? "Inactive" : "Standby";
+
+    power_control::osIface->register_property("OperatingSystemState",
+                                              std::string(osState));
+
+    power_control::osIface->initialize();
 
     power_control::io.run();
 
