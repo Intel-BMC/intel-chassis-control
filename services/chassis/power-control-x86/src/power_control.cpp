@@ -27,8 +27,7 @@
 namespace power_control
 {
 static boost::asio::io_service io;
-std::shared_ptr<sdbusplus::asio::connection> conn =
-    std::make_shared<sdbusplus::asio::connection>(io);
+std::shared_ptr<sdbusplus::asio::connection> conn;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> hostIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> chassisIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> powerButtonIface;
@@ -85,7 +84,7 @@ enum class PowerState
     gracefulTransitionToCycleOff,
 };
 static PowerState powerState;
-static constexpr std::string_view getPowerStateName(PowerState state)
+static std::string getPowerStateName(PowerState state)
 {
     switch (state)
     {
@@ -150,7 +149,7 @@ enum class Event
     gracefulPowerOffRequest,
     gracefulPowerCycleRequest,
 };
-static constexpr std::string_view getEventName(Event event)
+static std::string getEventName(Event event)
 {
     switch (event)
     {
@@ -1147,8 +1146,14 @@ static void postCompleteHandler()
 
 int main(int argc, char* argv[])
 {
-
     std::cerr << "Start Chassis power control service...\n";
+    power_control::conn =
+        std::make_shared<sdbusplus::asio::connection>(power_control::io);
+
+    // Request all the dbus names
+    power_control::conn->request_name("xyz.openbmc_project.State.Host");
+    power_control::conn->request_name("xyz.openbmc_project.State.Chassis");
+    power_control::conn->request_name("xyz.openbmc_project.Chassis.Buttons");
 
     // Request PS_PWROK GPIO events
     struct gpiod_line* powerGoodLine = power_control::requestGPIOEvents(
@@ -1253,7 +1258,6 @@ int main(int argc, char* argv[])
     power_control::logStateTransition(power_control::powerState);
 
     // Power Control Service
-    power_control::conn->request_name("xyz.openbmc_project.State.Host");
     sdbusplus::asio::object_server hostServer =
         sdbusplus::asio::object_server(power_control::conn);
 
@@ -1297,7 +1301,6 @@ int main(int argc, char* argv[])
     power_control::hostIface->initialize();
 
     // Chassis Control Service
-    power_control::conn->request_name("xyz.openbmc_project.State.Chassis");
     sdbusplus::asio::object_server chassisServer =
         sdbusplus::asio::object_server(power_control::conn);
 
@@ -1345,7 +1348,6 @@ int main(int argc, char* argv[])
     power_control::chassisIface->initialize();
 
     // Buttons Service
-    power_control::conn->request_name("xyz.openbmc_project.Chassis.Buttons");
     sdbusplus::asio::object_server buttonsServer =
         sdbusplus::asio::object_server(power_control::conn);
 
