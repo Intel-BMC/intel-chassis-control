@@ -17,9 +17,13 @@
 
 #include <gpiod.h>
 #include <linux/aspeed-lpc-sio.h>
+#include <sys/sysinfo.h>
 #include <systemd/sd-journal.h>
 
 #include <boost/asio/posix/stream_descriptor.hpp>
+#include <boost/container/flat_map.hpp>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sdbusplus/asio/object_server.hpp>
 #include <string_view>
@@ -48,6 +52,9 @@ const static constexpr int sioPowerGoodWatchdogTimeMs = 1000;
 const static constexpr int psPowerOKWatchdogTimeMs = 8000;
 const static constexpr int gracefulPowerOffTimeMs = 60000;
 const static constexpr int buttonMaskTimeMs = 60000;
+
+const static std::filesystem::path powerControlDir = "/var/lib/power-control";
+const static constexpr std::string_view powerDropFile = "power-drop";
 
 // Timers
 // Time holding GPIOs asserted
@@ -355,6 +362,239 @@ static void acOnLog()
                     "OpenBMC.0.1.DCPowerOnAfterACLost", NULL);
 }
 
+static int initializePowerDropStorage()
+{
+    // create the power control directory if it doesn't exist
+    std::error_code ec;
+    if (!(std::filesystem::create_directories(power_control::powerControlDir,
+                                              ec)))
+    {
+        if (ec.value() != 0)
+        {
+            std::cerr << "failed to create " << power_control::powerControlDir
+                      << ": " << ec.message() << "\n";
+            return -1;
+        }
+    }
+    // Create the power drop file if it doesn't exist
+    if (!std::filesystem::exists(power_control::powerControlDir /
+                                 power_control::powerDropFile))
+    {
+        std::ofstream powerDrop(power_control::powerControlDir /
+                                power_control::powerDropFile);
+        powerDrop << "No";
+    }
+    return 0;
+}
+
+static void storePowerDrop()
+{
+    std::ofstream powerDropStream(powerControlDir / powerDropFile);
+    powerDropStream << "Yes";
+}
+
+static void clearPowerDrop()
+{
+    std::ofstream powerDropStream(powerControlDir / powerDropFile);
+    powerDropStream << "No";
+}
+
+static bool wasPowerDropped()
+{
+    std::ifstream powerDropStream(powerControlDir / powerDropFile);
+    if (!powerDropStream.is_open())
+    {
+        std::cerr << "Failed to open power drop file\n";
+        return false;
+    }
+
+    std::string drop;
+    std::getline(powerDropStream, drop);
+    return drop == "Yes";
+}
+
+static void invokePowerRestorePolicy(const std::string& policy)
+{
+    // Async events may call this twice, but we only want to run once
+    static bool policyInvoked = false;
+    if (policyInvoked)
+    {
+        return;
+    }
+    policyInvoked = true;
+
+    std::cerr << "Power restore delay expired, invoking " << policy << "\n";
+    if (policy ==
+        "xyz.openbmc_project.Control.Power.RestorePolicy.Policy.AlwaysOn")
+    {
+        sendPowerControlEvent(Event::powerOnRequest);
+    }
+    else if (policy == "xyz.openbmc_project.Control.Power.RestorePolicy."
+                       "Policy.Restore")
+    {
+        if (wasPowerDropped())
+        {
+            std::cerr << "Power was dropped, restoring Host On state\n";
+            sendPowerControlEvent(Event::powerOnRequest);
+        }
+        else
+        {
+            std::cerr << "No power drop, restoring Host Off state\n";
+        }
+    }
+}
+
+static void powerRestorePolicyDelay(int delay)
+{
+    // Async events may call this twice, but we only want to run once
+    static bool delayStarted = false;
+    if (delayStarted)
+    {
+        return;
+    }
+    delayStarted = true;
+    // Calculate the delay from now to meet the requested delay
+    // Subtract the approximate uboot time
+    static constexpr const int ubootSeconds = 20;
+    delay -= ubootSeconds;
+    // Subtract the time since boot
+    struct sysinfo info = {};
+    if (sysinfo(&info) == 0)
+    {
+        delay -= info.uptime;
+    }
+    // 0 is the minimum delay
+    delay = std::max(delay, 0);
+
+    static boost::asio::steady_timer powerRestorePolicyTimer(io);
+    powerRestorePolicyTimer.expires_after(std::chrono::seconds(delay));
+    std::cerr << "Power restore delay of " << delay << " seconds started\n";
+    powerRestorePolicyTimer.async_wait([](const boost::system::error_code ec) {
+        if (ec)
+        {
+            // operation_aborted is expected if timer is canceled before
+            // completion.
+            if (ec != boost::asio::error::operation_aborted)
+            {
+                std::cerr << "power restore policy async_wait failed: "
+                          << ec.message() << "\n";
+            }
+            return;
+        }
+        // Get Power Restore Policy
+        // In case PowerRestorePolicy is not available, set a match for it
+        static std::unique_ptr<sdbusplus::bus::match::match>
+            powerRestorePolicyMatch = std::make_unique<
+                sdbusplus::bus::match::match>(
+                *conn,
+                "type='signal',interface='org.freedesktop.DBus.Properties',"
+                "member='PropertiesChanged',arg0namespace='xyz.openbmc_"
+                "project.Control.Power.RestorePolicy'",
+                [](sdbusplus::message::message& msg) {
+                    std::string interfaceName;
+                    boost::container::flat_map<std::string,
+                                               std::variant<std::string>>
+                        propertiesChanged;
+                    std::string policy;
+                    try
+                    {
+                        msg.read(interfaceName, propertiesChanged);
+                        policy = std::get<std::string>(
+                            propertiesChanged.begin()->second);
+                    }
+                    catch (std::exception& e)
+                    {
+                        std::cerr
+                            << "Unable to read power restore policy value\n";
+                        powerRestorePolicyMatch.reset();
+                        return;
+                    }
+                    invokePowerRestorePolicy(policy);
+                    powerRestorePolicyMatch.reset();
+                });
+
+        // Check if it's already on DBus
+        conn->async_method_call(
+            [](boost::system::error_code ec,
+               const std::variant<std::string>& policyProperty) {
+                if (ec)
+                {
+                    return;
+                }
+                powerRestorePolicyMatch.reset();
+                const std::string* policy =
+                    std::get_if<std::string>(&policyProperty);
+                if (policy == nullptr)
+                {
+                    std::cerr << "Unable to read power restore policy value\n";
+                    return;
+                }
+                invokePowerRestorePolicy(*policy);
+            },
+            "xyz.openbmc_project.Settings",
+            "/xyz/openbmc_project/control/host0/power_restore_policy",
+            "org.freedesktop.DBus.Properties", "Get",
+            "xyz.openbmc_project.Control.Power.RestorePolicy",
+            "PowerRestorePolicy");
+    });
+}
+
+static void powerRestorePolicyStart()
+{
+    std::cerr << "Power restore policy started\n";
+
+    // Get the desired delay time
+    // In case PowerRestoreDelay is not available, set a match for it
+    static std::unique_ptr<sdbusplus::bus::match::match>
+        powerRestoreDelayMatch = std::make_unique<sdbusplus::bus::match::match>(
+            *conn,
+            "type='signal',interface='org.freedesktop.DBus.Properties',member='"
+            "PropertiesChanged',arg0namespace='xyz.openbmc_project.Control."
+            "Power.RestoreDelay'",
+            [](sdbusplus::message::message& msg) {
+                std::string interfaceName;
+                boost::container::flat_map<std::string, std::variant<uint16_t>>
+                    propertiesChanged;
+                int delay = 0;
+                try
+                {
+                    msg.read(interfaceName, propertiesChanged);
+                    delay =
+                        std::get<uint16_t>(propertiesChanged.begin()->second);
+                }
+                catch (std::exception& e)
+                {
+                    std::cerr << "Unable to read power restore delay value\n";
+                    powerRestoreDelayMatch.reset();
+                    return;
+                }
+                powerRestorePolicyDelay(delay);
+                powerRestoreDelayMatch.reset();
+            });
+
+    // Check if it's already on DBus
+    conn->async_method_call(
+        [](boost::system::error_code ec,
+           const std::variant<uint16_t>& delayProperty) {
+            if (ec)
+            {
+                return;
+            }
+            powerRestoreDelayMatch.reset();
+            const uint16_t* delay = std::get_if<uint16_t>(&delayProperty);
+            if (delay == nullptr)
+            {
+                std::cerr << "Unable to read power restore delay value\n";
+                return;
+            }
+            powerRestorePolicyDelay(*delay);
+        },
+        "xyz.openbmc_project.Settings",
+        "/xyz/openbmc_project/control/power_restore_delay",
+        "org.freedesktop.DBus.Properties", "Get",
+        "xyz.openbmc_project.Control.Power.RestoreDelay", "PowerRestoreDelay");
+}
+
 static gpiod_line* requestGPIOEvents(
     const std::string_view name, const std::function<void()>& handler,
     boost::asio::posix::stream_descriptor& gpioEventDescriptor)
@@ -644,6 +884,7 @@ static void powerStateOn(const Event event)
     switch (event)
     {
         case Event::psPowerOKDeAssert:
+            storePowerDrop();
             setPowerState(PowerState::off);
             break;
         case Event::sioS5Assert:
@@ -755,13 +996,16 @@ static void powerStateOff(const Event event)
     switch (event)
     {
         case Event::psPowerOKAssert:
+            clearPowerDrop();
             setPowerState(PowerState::waitForSIOPowerGood);
             break;
         case Event::powerButtonPressed:
+            clearPowerDrop();
             psPowerOKWatchdogTimerStart();
             setPowerState(PowerState::waitForPSPowerOK);
             break;
         case Event::powerOnRequest:
+            clearPowerDrop();
             psPowerOKWatchdogTimerStart();
             setPowerState(PowerState::waitForPSPowerOK);
             powerOn();
@@ -779,16 +1023,19 @@ static void powerStateACLossOff(const Event event)
     {
         case Event::psPowerOKAssert:
             acOnLog();
+            clearPowerDrop();
             setPowerState(PowerState::waitForSIOPowerGood);
             break;
         case Event::powerButtonPressed:
             acOnLog();
             psPowerOKWatchdogTimerStart();
+            clearPowerDrop();
             setPowerState(PowerState::waitForPSPowerOK);
             break;
         case Event::powerOnRequest:
             acOnLog();
             psPowerOKWatchdogTimerStart();
+            clearPowerDrop();
             setPowerState(PowerState::waitForPSPowerOK);
             powerOn();
             break;
@@ -1213,6 +1460,12 @@ int main(int argc, char* argv[])
         "xyz.openbmc_project.State.OperatingSystem");
     power_control::conn->request_name("xyz.openbmc_project.Chassis.Buttons");
 
+    // Initialize the power drop storage
+    if (power_control::initializePowerDropStorage() < 0)
+    {
+        return -1;
+    }
+
     // Request PS_PWROK GPIO events
     struct gpiod_line* powerGoodLine = power_control::requestGPIOEvents(
         "PS_PWROK", power_control::psPowerOKHandler,
@@ -1316,6 +1569,9 @@ int main(int argc, char* argv[])
             // in the AC Loss Off state
             power_control::powerState = power_control::PowerState::acLossOff;
         }
+
+        // Start the Power Restore policy
+        power_control::powerRestorePolicyStart();
     }
     std::cerr << "Initializing power state. ";
     power_control::logStateTransition(power_control::powerState);
