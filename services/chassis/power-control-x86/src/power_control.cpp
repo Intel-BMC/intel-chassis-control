@@ -138,6 +138,8 @@ enum class Event
     psPowerOKDeAssert,
     sioPowerGoodAssert,
     sioPowerGoodDeAssert,
+    sioS5Assert,
+    sioS5DeAssert,
     powerButtonPressed,
     powerCycleTimerExpired,
     psPowerOKWatchdogTimerExpired,
@@ -165,6 +167,12 @@ static std::string getEventName(Event event)
             break;
         case Event::sioPowerGoodDeAssert:
             return "SIO power good de-assert";
+            break;
+        case Event::sioS5Assert:
+            return "SIO S5 assert";
+            break;
+        case Event::sioS5DeAssert:
+            return "SIO S5 de-assert";
             break;
         case Event::powerButtonPressed:
             return "power button pressed";
@@ -636,6 +644,9 @@ static void powerStateOn(const Event event)
         case Event::psPowerOKDeAssert:
             setPowerState(PowerState::off);
             break;
+        case Event::sioS5Assert:
+            setPowerState(PowerState::transitionToOff);
+            break;
         case Event::powerButtonPressed:
             setPowerState(PowerState::gracefulTransitionToOff);
             gracefulPowerOffTimerStart();
@@ -993,8 +1004,12 @@ static void sioS5Handler()
                   << sioS5Event.native_handle() << "\n";
         return;
     }
-    bool sioS5 = gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE;
-    std::cerr << "SIO_S5 value changed: " << sioS5 << "\n";
+    Event powerControlEvent =
+        gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE
+            ? Event::sioS5Assert
+            : Event::sioS5DeAssert;
+
+    sendPowerControlEvent(powerControlEvent);
     sioS5Event.async_wait(boost::asio::posix::stream_descriptor::wait_read,
                           [](const boost::system::error_code ec) {
                               if (ec)
