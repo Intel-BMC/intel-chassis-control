@@ -871,29 +871,28 @@ static void powerStateGracefulTransitionToCycleOff(const Event event)
     }
 }
 
-static int getPFailStatus(unsigned int data)
+bool isACBoot()
 {
-    struct sio_ioctl_data sioData;
-    int ret = 0;
+    struct sio_ioctl_data sioData = {};
 
     int fd = open("/dev/lpc-sio", O_RDWR | O_CLOEXEC);
     if (fd < 0)
     {
-        std::cerr << "Open LPC-SIO error!\n";
-        return -1;
+        std::cerr << "Failed to open lpc-sio\n";
+        return false;
     }
 
     sioData.sio_cmd = SIO_GET_PFAIL_STATUS;
     sioData.param = 0;
     if (ioctl(fd, SIO_IOC_COMMAND, &sioData) < 0)
     {
-        std::cerr << "ioctl SIO_GET_PFAIL_STATUS error!\n";
-        ret = -1;
+
+        std::cerr << "ioctl SIO_GET_PFAIL_STATUS error\n";
+        sioData.data = 0;
     }
 
-    data = sioData.data;
     close(fd);
-    return ret;
+    return (sioData.data != 0);
 }
 
 static void psPowerOKHandler()
@@ -1244,25 +1243,21 @@ int main(int argc, char* argv[])
     {
         power_control::powerState = power_control::PowerState::on;
     }
-    // Check PFAIL
-    unsigned int pfail = 0;
-    if (power_control::getPFailStatus(pfail) >= 0)
+
+    // Check if this is an AC boot
+    if (power_control::isACBoot())
     {
-        if (pfail)
+        // This is an AC boot, so log the AC boot event on the next boot
+        // If we're on, log the AC boot event now
+        if (power_control::powerState == power_control::PowerState::on)
         {
-            // PFAIL is asserted, so log the AC boot event on the next boot
-            // If we're on, log the AC boot event now
-            if (power_control::powerState == power_control::PowerState::on)
-            {
-                power_control::acOnLog();
-            }
-            else
-            {
-                // Since we're off, log the AC boot event at power on, by
-                // starting in the AC Loss Off state
-                power_control::powerState =
-                    power_control::PowerState::acLossOff;
-            }
+            power_control::acOnLog();
+        }
+        else
+        {
+            // Since we're off, log the AC boot event at power on, by starting
+            // in the AC Loss Off state
+            power_control::powerState = power_control::PowerState::acLossOff;
         }
     }
     std::cerr << "Initializing power state. ";
