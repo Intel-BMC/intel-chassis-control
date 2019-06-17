@@ -15,7 +15,6 @@
 */
 #include "i2c.hpp"
 
-#include <gpiod.h>
 #include <linux/aspeed-lpc-sio.h>
 #include <sys/sysinfo.h>
 #include <systemd/sd-journal.h>
@@ -24,6 +23,7 @@
 #include <boost/container/flat_map.hpp>
 #include <filesystem>
 #include <fstream>
+#include <gpiod.hpp>
 #include <iostream>
 #include <sdbusplus/asio/object_server.hpp>
 #include <string_view>
@@ -40,8 +40,8 @@ static std::shared_ptr<sdbusplus::asio::dbus_interface> nmiButtonIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> osIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> idButtonIface;
 
-static struct gpiod_line* powerButtonMask = nullptr;
-static struct gpiod_line* resetButtonMask = nullptr;
+static gpiod::line powerButtonMask;
+static gpiod::line resetButtonMask;
 static bool nmiButtonMasked = false;
 
 const static constexpr int powerPulseTimeMs = 200;
@@ -68,15 +68,24 @@ static boost::asio::steady_timer psPowerOKWatchdogTimer(io);
 // Time SIO power good assertion on power-on
 static boost::asio::steady_timer sioPowerGoodWatchdogTimer(io);
 
-// Event Descriptors
+// GPIO Lines and Event Descriptors
+static gpiod::line psPowerOKLine;
 static boost::asio::posix::stream_descriptor psPowerOKEvent(io);
+static gpiod::line sioPowerGoodLine;
 static boost::asio::posix::stream_descriptor sioPowerGoodEvent(io);
+static gpiod::line sioOnControlLine;
 static boost::asio::posix::stream_descriptor sioOnControlEvent(io);
+static gpiod::line sioS5Line;
 static boost::asio::posix::stream_descriptor sioS5Event(io);
+static gpiod::line powerButtonLine;
 static boost::asio::posix::stream_descriptor powerButtonEvent(io);
+static gpiod::line resetButtonLine;
 static boost::asio::posix::stream_descriptor resetButtonEvent(io);
+static gpiod::line nmiButtonLine;
 static boost::asio::posix::stream_descriptor nmiButtonEvent(io);
+static gpiod::line idButtonLine;
 static boost::asio::posix::stream_descriptor idButtonEvent(io);
+static gpiod::line postCompleteLine;
 static boost::asio::posix::stream_descriptor postCompleteEvent(io);
 
 enum class PowerState
@@ -673,36 +682,42 @@ static void powerRestorePolicyStart()
         "xyz.openbmc_project.Control.Power.RestoreDelay", "PowerRestoreDelay");
 }
 
-static gpiod_line* requestGPIOEvents(
-    const std::string_view name, const std::function<void()>& handler,
+static bool requestGPIOEvents(
+    const std::string& name, const std::function<void()>& handler,
+    gpiod::line& gpioLine,
     boost::asio::posix::stream_descriptor& gpioEventDescriptor)
 {
     // Find the GPIO line
-    struct gpiod_line* gpioLine = gpiod_line_find(name.data());
-    if (gpioLine == NULL)
+    gpioLine = gpiod::find_line(name);
+    if (!gpioLine)
     {
         std::cerr << "Failed to find the " << name << " line\n";
-        return nullptr;
+        return false;
     }
 
-    if (gpiod_line_request_both_edges_events(gpioLine, "power_control") < 0)
+    try
+    {
+        gpioLine.request(
+            {"power-control", gpiod::line_request::EVENT_BOTH_EDGES});
+    }
+    catch (std::exception&)
     {
         std::cerr << "Failed to request events for " << name << "\n";
-        return nullptr;
+        return false;
     }
 
-    int gpioLineFd = gpiod_line_event_get_fd(gpioLine);
+    int gpioLineFd = gpioLine.event_get_fd();
     if (gpioLineFd < 0)
     {
         std::cerr << "Failed to get " << name << " fd\n";
-        return nullptr;
+        return false;
     }
 
     gpioEventDescriptor.assign(gpioLineFd);
 
     gpioEventDescriptor.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
-        [name, handler](const boost::system::error_code ec) {
+        [&name, handler](const boost::system::error_code ec) {
             if (ec)
             {
                 std::cerr << name << " fd handler error: " << ec.message()
@@ -712,50 +727,48 @@ static gpiod_line* requestGPIOEvents(
             }
             handler();
         });
-    return gpioLine;
+    return true;
 }
 
-static struct gpiod_line* setGPIOOutput(const std::string_view name,
-                                        const int value)
+static bool setGPIOOutput(const std::string& name, const int value,
+                          gpiod::line& gpioLine)
 {
     // Find the GPIO line
-    struct gpiod_line* gpioLine = gpiod_line_find(name.data());
-    if (gpioLine == NULL)
+    gpioLine = gpiod::find_line(name);
+    if (!gpioLine)
     {
         std::cerr << "Failed to find the " << name << " line.\n";
-        return nullptr;
+        return false;
     }
 
     // Request GPIO output to specified value
-    if (gpiod_line_request_output(gpioLine, __FUNCTION__, value) < 0)
+    try
+    {
+        gpioLine.request({__FUNCTION__, gpiod::line_request::DIRECTION_OUTPUT},
+                         value);
+    }
+    catch (std::exception&)
     {
         std::cerr << "Failed to request " << name << " output\n";
-        return nullptr;
+        return false;
     }
 
     std::cerr << name << " set to " << std::to_string(value) << "\n";
-    return gpioLine;
+    return true;
 }
 
-static int setMaskedGPIOOutputForMs(struct gpiod_line* maskedGPIOLine,
-                                    const std::string_view name,
-                                    const int value, const int durationMs)
+static int setMaskedGPIOOutputForMs(gpiod::line& maskedGPIOLine,
+                                    const std::string& name, const int value,
+                                    const int durationMs)
 {
     // Set the masked GPIO line to the specified value
-    if (gpiod_line_set_value(maskedGPIOLine, value) < 0)
-    {
-        return -1;
-    }
-    std::cerr << name << " set to " << std::to_string(value);
+    maskedGPIOLine.set_value(value);
+    std::cerr << name << " set to " << std::to_string(value) << "\n";
     gpioAssertTimer.expires_after(std::chrono::milliseconds(durationMs));
     gpioAssertTimer.async_wait(
         [maskedGPIOLine, value, name](const boost::system::error_code ec) {
             // Set the masked GPIO line back to the opposite value
-            if (gpiod_line_set_value(maskedGPIOLine, !value) < 0)
-            {
-                std::cerr << name << " failed to release\n";
-                return;
-            }
+            maskedGPIOLine.set_value(!value);
             std::cerr << name << " released\n";
             if (ec)
             {
@@ -771,31 +784,30 @@ static int setMaskedGPIOOutputForMs(struct gpiod_line* maskedGPIOLine,
     return 0;
 }
 
-static int setGPIOOutputForMs(const std::string_view name, const int value,
+static int setGPIOOutputForMs(const std::string& name, const int value,
                               const int durationMs)
 {
     // If the requested GPIO is masked, use the mask line to set the output
-    if (powerButtonMask != nullptr && name == "POWER_OUT")
+    if (powerButtonMask && name == "POWER_OUT")
     {
         return setMaskedGPIOOutputForMs(powerButtonMask, name, value,
                                         durationMs);
     }
-    if (resetButtonMask != nullptr && name == "RESET_OUT")
+    if (resetButtonMask && name == "RESET_OUT")
     {
         return setMaskedGPIOOutputForMs(resetButtonMask, name, value,
                                         durationMs);
     }
 
     // No mask set, so request and set the GPIO normally
-    struct gpiod_line* gpioLine = setGPIOOutput(name, value);
-    if (gpioLine == nullptr)
+    gpiod::line gpioLine;
+    if (!setGPIOOutput(name, value, gpioLine))
     {
         return -1;
     }
     gpioAssertTimer.expires_after(std::chrono::milliseconds(durationMs));
     gpioAssertTimer.async_wait(
         [gpioLine, name](const boost::system::error_code ec) {
-            gpiod_line_close_chip(gpioLine);
             std::cerr << name << " released\n";
             if (ec)
             {
@@ -1236,17 +1248,10 @@ bool isACBoot()
 
 static void psPowerOKHandler()
 {
-    struct gpiod_line_event gpioLineEvent;
+    gpiod::line_event gpioLineEvent = psPowerOKLine.event_read();
 
-    if (gpiod_line_event_read_fd(psPowerOKEvent.native_handle(),
-                                 &gpioLineEvent) < 0)
-    {
-        std::cerr << "failed to read gpioLineEvent from fd: "
-                  << psPowerOKEvent.native_handle() << "\n";
-        return;
-    }
     Event powerControlEvent =
-        gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE
+        gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE
             ? Event::psPowerOKAssert
             : Event::psPowerOKDeAssert;
 
@@ -1266,17 +1271,10 @@ static void psPowerOKHandler()
 
 static void sioPowerGoodHandler()
 {
-    struct gpiod_line_event gpioLineEvent;
+    gpiod::line_event gpioLineEvent = sioPowerGoodLine.event_read();
 
-    if (gpiod_line_event_read_fd(sioPowerGoodEvent.native_handle(),
-                                 &gpioLineEvent) < 0)
-    {
-        std::cerr << "failed to read gpioLineEvent from fd: "
-                  << sioPowerGoodEvent.native_handle() << "\n";
-        return;
-    }
     Event powerControlEvent =
-        gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE
+        gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE
             ? Event::sioPowerGoodAssert
             : Event::sioPowerGoodDeAssert;
 
@@ -1296,17 +1294,10 @@ static void sioPowerGoodHandler()
 
 static void sioOnControlHandler()
 {
-    struct gpiod_line_event gpioLineEvent;
+    gpiod::line_event gpioLineEvent = sioOnControlLine.event_read();
 
-    if (gpiod_line_event_read_fd(sioOnControlEvent.native_handle(),
-                                 &gpioLineEvent) < 0)
-    {
-        std::cerr << "failed to read gpioLineEvent from fd: "
-                  << sioOnControlEvent.native_handle() << "\n";
-        return;
-    }
     bool sioOnControl =
-        gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE;
+        gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE;
     std::cerr << "SIO_ONCONTROL value changed: " << sioOnControl << "\n";
     sioOnControlEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
@@ -1323,17 +1314,10 @@ static void sioOnControlHandler()
 
 static void sioS5Handler()
 {
-    struct gpiod_line_event gpioLineEvent;
+    gpiod::line_event gpioLineEvent = sioS5Line.event_read();
 
-    if (gpiod_line_event_read_fd(sioS5Event.native_handle(), &gpioLineEvent) <
-        0)
-    {
-        std::cerr << "failed to read gpioLineEvent from fd: "
-                  << sioS5Event.native_handle() << "\n";
-        return;
-    }
     Event powerControlEvent =
-        gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE
+        gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE
             ? Event::sioS5Assert
             : Event::sioS5DeAssert;
 
@@ -1352,20 +1336,13 @@ static void sioS5Handler()
 
 static void powerButtonHandler()
 {
-    struct gpiod_line_event gpioLineEvent;
+    gpiod::line_event gpioLineEvent = powerButtonLine.event_read();
 
-    if (gpiod_line_event_read_fd(powerButtonEvent.native_handle(),
-                                 &gpioLineEvent) < 0)
-    {
-        std::cerr << "failed to read gpioLineEvent from fd: "
-                  << powerButtonEvent.native_handle() << "\n";
-        return;
-    }
-    if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE)
+    if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
         powerButtonPressLog();
         powerButtonIface->set_property("ButtonPressed", true);
-        if (powerButtonMask == nullptr)
+        if (!powerButtonMask)
         {
             sendPowerControlEvent(Event::powerButtonPressed);
             setRestartCause(RestartCause::powerButton);
@@ -1375,7 +1352,7 @@ static void powerButtonHandler()
             std::cerr << "power button press masked\n";
         }
     }
-    else if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE)
+    else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
         powerButtonIface->set_property("ButtonPressed", false);
     }
@@ -1394,20 +1371,13 @@ static void powerButtonHandler()
 
 static void resetButtonHandler()
 {
-    struct gpiod_line_event gpioLineEvent;
+    gpiod::line_event gpioLineEvent = resetButtonLine.event_read();
 
-    if (gpiod_line_event_read_fd(resetButtonEvent.native_handle(),
-                                 &gpioLineEvent) < 0)
-    {
-        std::cerr << "failed to read gpioLineEvent from fd: "
-                  << resetButtonEvent.native_handle() << "\n";
-        return;
-    }
-    if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE)
+    if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
         resetButtonPressLog();
         resetButtonIface->set_property("ButtonPressed", true);
-        if (resetButtonMask == nullptr)
+        if (!resetButtonMask)
         {
             setRestartCause(RestartCause::resetButton);
         }
@@ -1416,7 +1386,7 @@ static void resetButtonHandler()
             std::cerr << "reset button press masked\n";
         }
     }
-    else if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE)
+    else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
         resetButtonIface->set_property("ButtonPressed", false);
     }
@@ -1435,16 +1405,9 @@ static void resetButtonHandler()
 
 static void nmiButtonHandler()
 {
-    struct gpiod_line_event gpioLineEvent;
+    gpiod::line_event gpioLineEvent = nmiButtonLine.event_read();
 
-    if (gpiod_line_event_read_fd(nmiButtonEvent.native_handle(),
-                                 &gpioLineEvent) < 0)
-    {
-        std::cerr << "failed to read gpioLineEvent from fd: "
-                  << nmiButtonEvent.native_handle() << "\n";
-        return;
-    }
-    if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE)
+    if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
         nmiButtonPressLog();
         nmiButtonIface->set_property("ButtonPressed", true);
@@ -1453,7 +1416,7 @@ static void nmiButtonHandler()
             std::cerr << "NMI button press masked\n";
         }
     }
-    else if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE)
+    else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
         nmiButtonIface->set_property("ButtonPressed", false);
     }
@@ -1471,20 +1434,13 @@ static void nmiButtonHandler()
 
 static void idButtonHandler()
 {
-    struct gpiod_line_event gpioLineEvent;
+    gpiod::line_event gpioLineEvent = idButtonLine.event_read();
 
-    if (gpiod_line_event_read_fd(idButtonEvent.native_handle(),
-                                 &gpioLineEvent) < 0)
-    {
-        std::cerr << "failed to read gpioLineEvent from fd: "
-                  << idButtonEvent.native_handle() << "\n";
-        return;
-    }
-    if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE)
+    if (gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE)
     {
         idButtonIface->set_property("ButtonPressed", true);
     }
-    else if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE)
+    else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
     {
         idButtonIface->set_property("ButtonPressed", false);
     }
@@ -1502,15 +1458,10 @@ static void idButtonHandler()
 
 static void postCompleteHandler()
 {
-    struct gpiod_line_event event;
+    gpiod::line_event gpioLineEvent = postCompleteLine.event_read();
 
-    if (gpiod_line_event_read_fd(postCompleteEvent.native_handle(), &event) < 0)
-    {
-        std::cerr << "failed to read event from fd: "
-                  << postCompleteEvent.native_handle() << "\n";
-        return;
-    }
-    bool postComplete = event.event_type == GPIOD_LINE_EVENT_FALLING_EDGE;
+    bool postComplete =
+        gpioLineEvent.event_type == gpiod::line_event::FALLING_EDGE;
     std::cerr << "POST complete value changed: " << postComplete << "\n";
     if (postComplete)
     {
@@ -1554,81 +1505,73 @@ int main(int argc, char* argv[])
     }
 
     // Request PS_PWROK GPIO events
-    struct gpiod_line* powerGoodLine = power_control::requestGPIOEvents(
-        "PS_PWROK", power_control::psPowerOKHandler,
-        power_control::psPowerOKEvent);
-    if (powerGoodLine == nullptr)
+    if (!power_control::requestGPIOEvents(
+            "PS_PWROK", power_control::psPowerOKHandler,
+            power_control::psPowerOKLine, power_control::psPowerOKEvent))
     {
         return -1;
     }
 
     // Request SIO_POWER_GOOD GPIO events
-    struct gpiod_line* sioPowerGoodLine = power_control::requestGPIOEvents(
-        "SIO_POWER_GOOD", power_control::sioPowerGoodHandler,
-        power_control::sioPowerGoodEvent);
-    if (sioPowerGoodLine == nullptr)
+    if (!power_control::requestGPIOEvents(
+            "SIO_POWER_GOOD", power_control::sioPowerGoodHandler,
+            power_control::sioPowerGoodLine, power_control::sioPowerGoodEvent))
     {
         return -1;
     }
 
     // Request SIO_ONCONTROL GPIO events
-    struct gpiod_line* sioOnControlLine = power_control::requestGPIOEvents(
-        "SIO_ONCONTROL", power_control::sioOnControlHandler,
-        power_control::sioOnControlEvent);
-    if (sioOnControlLine == nullptr)
+    if (!power_control::requestGPIOEvents(
+            "SIO_ONCONTROL", power_control::sioOnControlHandler,
+            power_control::sioOnControlLine, power_control::sioOnControlEvent))
     {
         return -1;
     }
 
     // Request SIO_S5 GPIO events
-    struct gpiod_line* sioS5Line = power_control::requestGPIOEvents(
-        "SIO_S5", power_control::sioS5Handler, power_control::sioS5Event);
-    if (sioS5Line == nullptr)
+    if (!power_control::requestGPIOEvents("SIO_S5", power_control::sioS5Handler,
+                                          power_control::sioS5Line,
+                                          power_control::sioS5Event))
     {
         return -1;
     }
 
     // Request POWER_BUTTON GPIO events
-    struct gpiod_line* powerButtonLine = power_control::requestGPIOEvents(
-        "POWER_BUTTON", power_control::powerButtonHandler,
-        power_control::powerButtonEvent);
-    if (powerButtonLine == nullptr)
+    if (!power_control::requestGPIOEvents(
+            "POWER_BUTTON", power_control::powerButtonHandler,
+            power_control::powerButtonLine, power_control::powerButtonEvent))
     {
         return -1;
     }
 
     // Request RESET_BUTTON GPIO events
-    struct gpiod_line* resetButtonLine = power_control::requestGPIOEvents(
-        "RESET_BUTTON", power_control::resetButtonHandler,
-        power_control::resetButtonEvent);
-    if (resetButtonLine == nullptr)
+    if (!power_control::requestGPIOEvents(
+            "RESET_BUTTON", power_control::resetButtonHandler,
+            power_control::resetButtonLine, power_control::resetButtonEvent))
     {
         return -1;
     }
 
     // Request NMI_BUTTON GPIO events
-    struct gpiod_line* nmiButtonLine = power_control::requestGPIOEvents(
-        "NMI_BUTTON", power_control::nmiButtonHandler,
-        power_control::nmiButtonEvent);
-    if (nmiButtonLine == nullptr)
+    if (!power_control::requestGPIOEvents(
+            "NMI_BUTTON", power_control::nmiButtonHandler,
+            power_control::nmiButtonLine, power_control::nmiButtonEvent))
     {
         return -1;
     }
 
     // Request ID_BUTTON GPIO events
-    struct gpiod_line* idButtonLine = power_control::requestGPIOEvents(
-        "ID_BUTTON", power_control::idButtonHandler,
-        power_control::idButtonEvent);
-    if (idButtonLine == nullptr)
+    if (!power_control::requestGPIOEvents(
+            "ID_BUTTON", power_control::idButtonHandler,
+            power_control::idButtonLine, power_control::idButtonEvent))
     {
         return -1;
     }
 
     // Request POST_COMPLETE GPIO events
-    struct gpiod_line* postCompleteLine = power_control::requestGPIOEvents(
-        "POST_COMPLETE", power_control::postCompleteHandler,
-        power_control::postCompleteEvent);
-    if (postCompleteLine == nullptr)
+    if (!power_control::requestGPIOEvents(
+            "POST_COMPLETE", power_control::postCompleteHandler,
+            power_control::postCompleteLine, power_control::postCompleteEvent))
     {
         return -1;
     }
@@ -1636,7 +1579,7 @@ int main(int argc, char* argv[])
     // Initialize the power state
     power_control::powerState = power_control::PowerState::off;
     // Check power good
-    if (gpiod_line_get_value(powerGoodLine) > 0)
+    if (power_control::psPowerOKLine.get_value() > 0)
     {
         power_control::powerState = power_control::PowerState::on;
     }
@@ -1771,13 +1714,12 @@ int main(int argc, char* argv[])
         "ButtonMasked", false, [](const bool requested, bool& current) {
             if (requested)
             {
-                if (power_control::powerButtonMask != nullptr)
+                if (power_control::powerButtonMask)
                 {
                     return 1;
                 }
-                power_control::powerButtonMask =
-                    power_control::setGPIOOutput("POWER_OUT", 1);
-                if (power_control::powerButtonMask == nullptr)
+                if (!power_control::setGPIOOutput(
+                        "POWER_OUT", 1, power_control::powerButtonMask))
                 {
                     throw std::runtime_error("Failed to request GPIO");
                     return 0;
@@ -1786,13 +1728,12 @@ int main(int argc, char* argv[])
             }
             else
             {
-                if (power_control::powerButtonMask == nullptr)
+                if (!power_control::powerButtonMask)
                 {
                     return 1;
                 }
                 std::cerr << "Power Button Un-masked\n";
-                gpiod_line_close_chip(power_control::powerButtonMask);
-                power_control::powerButtonMask = nullptr;
+                power_control::powerButtonMask.reset();
             }
             // Update the mask setting
             current = requested;
@@ -1800,11 +1741,7 @@ int main(int argc, char* argv[])
         });
 
     // Check power button state
-    bool powerButtonPressed = false;
-    if (gpiod_line_get_value(powerButtonLine) == 0)
-    {
-        powerButtonPressed = true;
-    }
+    bool powerButtonPressed = power_control::powerButtonLine.get_value() == 0;
     power_control::powerButtonIface->register_property("ButtonPressed",
                                                        powerButtonPressed);
 
@@ -1819,13 +1756,12 @@ int main(int argc, char* argv[])
         "ButtonMasked", false, [](const bool requested, bool& current) {
             if (requested)
             {
-                if (power_control::resetButtonMask != nullptr)
+                if (power_control::resetButtonMask)
                 {
                     return 1;
                 }
-                power_control::resetButtonMask =
-                    power_control::setGPIOOutput("RESET_OUT", 1);
-                if (power_control::resetButtonMask == nullptr)
+                if (!power_control::setGPIOOutput(
+                        "RESET_OUT", 1, power_control::resetButtonMask))
                 {
                     throw std::runtime_error("Failed to request GPIO");
                     return 0;
@@ -1834,13 +1770,12 @@ int main(int argc, char* argv[])
             }
             else
             {
-                if (power_control::resetButtonMask == nullptr)
+                if (!power_control::resetButtonMask)
                 {
                     return 1;
                 }
                 std::cerr << "Reset Button Un-masked\n";
-                gpiod_line_close_chip(power_control::resetButtonMask);
-                power_control::resetButtonMask = nullptr;
+                power_control::resetButtonMask.reset();
             }
             // Update the mask setting
             current = requested;
@@ -1848,11 +1783,7 @@ int main(int argc, char* argv[])
         });
 
     // Check reset button state
-    bool resetButtonPressed = false;
-    if (gpiod_line_get_value(powerButtonLine) == 0)
-    {
-        resetButtonPressed = true;
-    }
+    bool resetButtonPressed = power_control::resetButtonLine.get_value() == 0;
     power_control::resetButtonIface->register_property("ButtonPressed",
                                                        resetButtonPressed);
 
@@ -1886,11 +1817,7 @@ int main(int argc, char* argv[])
         });
 
     // Check NMI button state
-    bool nmiButtonPressed = false;
-    if (gpiod_line_get_value(nmiButtonLine) == 0)
-    {
-        nmiButtonPressed = true;
-    }
+    bool nmiButtonPressed = power_control::nmiButtonLine.get_value() == 0;
     power_control::nmiButtonIface->register_property("ButtonPressed",
                                                      nmiButtonPressed);
 
@@ -1902,11 +1829,7 @@ int main(int argc, char* argv[])
                                     "xyz.openbmc_project.Chassis.Buttons");
 
     // Check ID button state
-    bool idButtonPressed = false;
-    if (gpiod_line_get_value(idButtonLine) == 0)
-    {
-        idButtonPressed = true;
-    }
+    bool idButtonPressed = power_control::idButtonLine.get_value() == 0;
     power_control::idButtonIface->register_property("ButtonPressed",
                                                     idButtonPressed);
 
@@ -1924,8 +1847,9 @@ int main(int argc, char* argv[])
     // Get the initial OS state based on POST complete
     //      0: Asserted, OS state is "Standby" (ready to boot)
     //      1: De-Asserted, OS state is "Inactive"
-    std::string osState =
-        gpiod_line_get_value(postCompleteLine) > 0 ? "Inactive" : "Standby";
+    std::string osState = power_control::postCompleteLine.get_value() > 0
+                              ? "Inactive"
+                              : "Standby";
 
     power_control::osIface->register_property("OperatingSystemState",
                                               std::string(osState));
