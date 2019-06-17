@@ -362,6 +362,27 @@ static void acOnLog()
                     "OpenBMC.0.1.DCPowerOnAfterACLost", NULL);
 }
 
+static void powerButtonPressLog()
+{
+    sd_journal_send("MESSAGE=PowerControl: power button pressed", "PRIORITY=%i",
+                    LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.PowerButtonPressed", NULL);
+}
+
+static void resetButtonPressLog()
+{
+    sd_journal_send("MESSAGE=PowerControl: reset button pressed", "PRIORITY=%i",
+                    LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.ResetButtonPressed", NULL);
+}
+
+static void nmiButtonPressLog()
+{
+    sd_journal_send("MESSAGE=PowerControl: NMI button pressed", "PRIORITY=%i",
+                    LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.NMIButtonPressed", NULL);
+}
+
 static int initializePowerDropStorage()
 {
     // create the power control directory if it doesn't exist
@@ -1284,6 +1305,7 @@ static void powerButtonHandler()
     }
     if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE)
     {
+        powerButtonPressLog();
         powerButtonIface->set_property("ButtonPressed", true);
         if (powerButtonMask == nullptr)
         {
@@ -1324,6 +1346,7 @@ static void resetButtonHandler()
     }
     if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE)
     {
+        resetButtonPressLog();
         resetButtonIface->set_property("ButtonPressed", true);
         if (resetButtonMask != nullptr)
         {
@@ -1360,6 +1383,7 @@ static void nmiButtonHandler()
     }
     if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE)
     {
+        nmiButtonPressLog();
         nmiButtonIface->set_property("ButtonPressed", true);
         if (nmiButtonMasked)
         {
