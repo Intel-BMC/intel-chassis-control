@@ -34,6 +34,7 @@ static std::shared_ptr<sdbusplus::asio::dbus_interface> powerButtonIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> resetButtonIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> nmiButtonIface;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> osIface;
+static std::shared_ptr<sdbusplus::asio::dbus_interface> idButtonIface;
 
 static struct gpiod_line* powerButtonMask = nullptr;
 static struct gpiod_line* resetButtonMask = nullptr;
@@ -68,6 +69,7 @@ static boost::asio::posix::stream_descriptor sioS5Event(io);
 static boost::asio::posix::stream_descriptor powerButtonEvent(io);
 static boost::asio::posix::stream_descriptor resetButtonEvent(io);
 static boost::asio::posix::stream_descriptor nmiButtonEvent(io);
+static boost::asio::posix::stream_descriptor idButtonEvent(io);
 static boost::asio::posix::stream_descriptor postCompleteEvent(io);
 
 enum class PowerState
@@ -1133,6 +1135,37 @@ static void nmiButtonHandler()
                               });
 }
 
+static void idButtonHandler()
+{
+    struct gpiod_line_event gpioLineEvent;
+
+    if (gpiod_line_event_read_fd(idButtonEvent.native_handle(),
+                                 &gpioLineEvent) < 0)
+    {
+        std::cerr << "failed to read gpioLineEvent from fd: "
+                  << idButtonEvent.native_handle() << "\n";
+        return;
+    }
+    if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_FALLING_EDGE)
+    {
+        idButtonIface->set_property("ButtonPressed", true);
+    }
+    else if (gpioLineEvent.event_type == GPIOD_LINE_EVENT_RISING_EDGE)
+    {
+        idButtonIface->set_property("ButtonPressed", false);
+    }
+    idButtonEvent.async_wait(boost::asio::posix::stream_descriptor::wait_read,
+                             [](const boost::system::error_code& ec) {
+                                 if (ec)
+                                 {
+                                     std::cerr << "ID button handler error: "
+                                               << ec.message() << "\n";
+                                     return;
+                                 }
+                                 idButtonHandler();
+                             });
+}
+
 static void postCompleteHandler()
 {
     struct gpiod_line_event event;
@@ -1237,7 +1270,16 @@ int main(int argc, char* argv[])
     struct gpiod_line* nmiButtonLine = power_control::requestGPIOEvents(
         "NMI_BUTTON", power_control::nmiButtonHandler,
         power_control::nmiButtonEvent);
-    if (resetButtonLine == nullptr)
+    if (nmiButtonLine == nullptr)
+    {
+        return -1;
+    }
+
+    // Request ID_BUTTON GPIO events
+    struct gpiod_line* idButtonLine = power_control::requestGPIOEvents(
+        "ID_BUTTON", power_control::idButtonHandler,
+        power_control::idButtonEvent);
+    if (idButtonLine == nullptr)
     {
         return -1;
     }
@@ -1505,6 +1547,22 @@ int main(int argc, char* argv[])
                                                      nmiButtonPressed);
 
     power_control::nmiButtonIface->initialize();
+
+    // ID Button Interface
+    power_control::idButtonIface =
+        buttonsServer.add_interface("/xyz/openbmc_project/chassis/buttons/id",
+                                    "xyz.openbmc_project.Chassis.Buttons");
+
+    // Check ID button state
+    bool idButtonPressed = false;
+    if (gpiod_line_get_value(idButtonLine) == 0)
+    {
+        idButtonPressed = true;
+    }
+    power_control::idButtonIface->register_property("ButtonPressed",
+                                                    idButtonPressed);
+
+    power_control::idButtonIface->initialize();
 
     // OS State Service
     sdbusplus::asio::object_server osServer =
