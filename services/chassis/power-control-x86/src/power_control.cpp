@@ -95,7 +95,6 @@ enum class PowerState
     waitForSIOPowerGood,
     failedTransitionToOn,
     off,
-    acLossOff,
     transitionToOff,
     gracefulTransitionToOff,
     cycleOff,
@@ -121,9 +120,6 @@ static std::string getPowerStateName(PowerState state)
             break;
         case PowerState::off:
             return "Off";
-            break;
-        case PowerState::acLossOff:
-            return "Off After AC Loss";
             break;
         case PowerState::transitionToOff:
             return "Transition to Off";
@@ -242,7 +238,6 @@ static void powerStateWaitForPSPowerOK(const Event event);
 static void powerStateWaitForSIOPowerGood(const Event event);
 static void powerStateFailedTransitionToOn(const Event event);
 static void powerStateOff(const Event event);
-static void powerStateACLossOff(const Event event);
 static void powerStateTransitionToOff(const Event event);
 static void powerStateGracefulTransitionToOff(const Event event);
 static void powerStateCycleOff(const Event event);
@@ -267,9 +262,6 @@ static std::function<void(const Event)> getPowerStateHandler(PowerState state)
             break;
         case PowerState::off:
             return powerStateOff;
-            break;
-        case PowerState::acLossOff:
-            return powerStateACLossOff;
             break;
         case PowerState::transitionToOff:
             return powerStateTransitionToOff;
@@ -320,7 +312,6 @@ static constexpr std::string_view getHostState(const PowerState state)
         case PowerState::failedTransitionToOn:
         case PowerState::off:
         case PowerState::cycleOff:
-        case PowerState::acLossOff:
             return "xyz.openbmc_project.State.Host.HostState.Off";
             break;
         default:
@@ -344,7 +335,6 @@ static constexpr std::string_view getChassisState(const PowerState state)
         case PowerState::failedTransitionToOn:
         case PowerState::off:
         case PowerState::cycleOff:
-        case PowerState::acLossOff:
             return "xyz.openbmc_project.State.Chassis.PowerState.Off";
             break;
         default:
@@ -419,11 +409,11 @@ static void setRestartCause(const RestartCause cause)
         std::variant<std::string>(getRestartCause(cause)));
 }
 
-static void acOnLog()
+static void powerRestorePolicyLog()
 {
-    sd_journal_send("MESSAGE=PowerControl: AC lost PowerOn", "PRIORITY=%i",
-                    LOG_INFO, "REDFISH_MESSAGE_ID=%s",
-                    "OpenBMC.0.1.DCPowerOnAfterACLost", NULL);
+    sd_journal_send("MESSAGE=PowerControl: power restore policy started",
+                    "PRIORITY=%i", LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.PowerRestorePolicyStarted", NULL);
 }
 
 static void powerButtonPressLog()
@@ -629,6 +619,7 @@ static void powerRestorePolicyDelay(int delay)
 static void powerRestorePolicyStart()
 {
     std::cerr << "Power restore policy started\n";
+    powerRestorePolicyLog();
 
     // Get the desired delay time
     // In case PowerRestoreDelay is not available, set a match for it
@@ -1107,35 +1098,6 @@ static void powerStateOff(const Event event)
     }
 }
 
-static void powerStateACLossOff(const Event event)
-{
-    logEvent(__FUNCTION__, event);
-    switch (event)
-    {
-        case Event::psPowerOKAssert:
-            acOnLog();
-            clearPowerDrop();
-            setPowerState(PowerState::waitForSIOPowerGood);
-            break;
-        case Event::powerButtonPressed:
-            acOnLog();
-            psPowerOKWatchdogTimerStart();
-            clearPowerDrop();
-            setPowerState(PowerState::waitForPSPowerOK);
-            break;
-        case Event::powerOnRequest:
-            acOnLog();
-            psPowerOKWatchdogTimerStart();
-            clearPowerDrop();
-            setPowerState(PowerState::waitForPSPowerOK);
-            powerOn();
-            break;
-        default:
-            std::cerr << "No action taken.\n";
-            break;
-    }
-}
-
 static void powerStateTransitionToOff(const Event event)
 {
     logEvent(__FUNCTION__, event);
@@ -1587,19 +1549,6 @@ int main(int argc, char* argv[])
     // Check if this is an AC boot
     if (power_control::isACBoot())
     {
-        // This is an AC boot, so log the AC boot event on the next boot
-        // If we're on, log the AC boot event now
-        if (power_control::powerState == power_control::PowerState::on)
-        {
-            power_control::acOnLog();
-        }
-        else
-        {
-            // Since we're off, log the AC boot event at power on, by starting
-            // in the AC Loss Off state
-            power_control::powerState = power_control::PowerState::acLossOff;
-        }
-
         // Start the Power Restore policy
         power_control::powerRestorePolicyStart();
     }
