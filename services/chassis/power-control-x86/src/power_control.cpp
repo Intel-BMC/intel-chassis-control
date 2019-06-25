@@ -15,7 +15,6 @@
 */
 #include "i2c.hpp"
 
-#include <linux/aspeed-lpc-sio.h>
 #include <sys/sysinfo.h>
 #include <systemd/sd-journal.h>
 
@@ -673,6 +672,77 @@ static void powerRestorePolicyStart()
         "xyz.openbmc_project.Control.Power.RestoreDelay", "PowerRestoreDelay");
 }
 
+static void powerRestorePolicyCheck()
+{
+    // In case ACBoot is not available, set a match for it
+    static std::unique_ptr<sdbusplus::bus::match::match> acBootMatch =
+        std::make_unique<sdbusplus::bus::match::match>(
+            *conn,
+            "type='signal',interface='org.freedesktop.DBus.Properties',member='"
+            "PropertiesChanged',arg0namespace='xyz.openbmc_project.Common."
+            "ACBoot'",
+            [](sdbusplus::message::message& msg) {
+                std::string interfaceName;
+                boost::container::flat_map<std::string,
+                                           std::variant<std::string>>
+                    propertiesChanged;
+                std::string acBoot;
+                try
+                {
+                    msg.read(interfaceName, propertiesChanged);
+                    acBoot = std::get<std::string>(
+                        propertiesChanged.begin()->second);
+                }
+                catch (std::exception& e)
+                {
+                    std::cerr << "Unable to read AC Boot status\n";
+                    acBootMatch.reset();
+                    return;
+                }
+                if (acBoot == "Unknown")
+                {
+                    return;
+                }
+                if (acBoot == "True")
+                {
+                    // Start the Power Restore policy
+                    powerRestorePolicyStart();
+                }
+                acBootMatch.reset();
+            });
+
+    // Check if it's already on DBus
+    conn->async_method_call(
+        [](boost::system::error_code ec,
+           const std::variant<std::string>& acBootProperty) {
+            if (ec)
+            {
+                return;
+            }
+            const std::string* acBoot =
+                std::get_if<std::string>(&acBootProperty);
+            if (acBoot == nullptr)
+            {
+                std::cerr << "Unable to read AC Boot status\n";
+                return;
+            }
+            if (*acBoot == "Unknown")
+            {
+                return;
+            }
+            if (*acBoot == "True")
+            {
+                // Start the Power Restore policy
+                powerRestorePolicyStart();
+            }
+            acBootMatch.reset();
+        },
+        "xyz.openbmc_project.Settings",
+        "/xyz/openbmc_project/control/host0/ac_boot",
+        "org.freedesktop.DBus.Properties", "Get",
+        "xyz.openbmc_project.Common.ACBoot", "ACBoot");
+}
+
 static bool requestGPIOEvents(
     const std::string& name, const std::function<void()>& handler,
     gpiod::line& gpioLine,
@@ -1184,30 +1254,6 @@ static void powerStateGracefulTransitionToCycleOff(const Event event)
     }
 }
 
-bool isACBoot()
-{
-    struct sio_ioctl_data sioData = {};
-
-    int fd = open("/dev/lpc-sio", O_RDWR | O_CLOEXEC);
-    if (fd < 0)
-    {
-        std::cerr << "Failed to open lpc-sio\n";
-        return false;
-    }
-
-    sioData.sio_cmd = SIO_GET_PFAIL_STATUS;
-    sioData.param = 0;
-    if (ioctl(fd, SIO_IOC_COMMAND, &sioData) < 0)
-    {
-
-        std::cerr << "ioctl SIO_GET_PFAIL_STATUS error\n";
-        sioData.data = 0;
-    }
-
-    close(fd);
-    return (sioData.data != 0);
-}
-
 static void psPowerOKHandler()
 {
     gpiod::line_event gpioLineEvent = psPowerOKLine.event_read();
@@ -1546,12 +1592,9 @@ int main(int argc, char* argv[])
         power_control::powerState = power_control::PowerState::on;
     }
 
-    // Check if this is an AC boot
-    if (power_control::isACBoot())
-    {
-        // Start the Power Restore policy
-        power_control::powerRestorePolicyStart();
-    }
+    // Check if we need to start the Power Restore policy
+    power_control::powerRestorePolicyCheck();
+
     std::cerr << "Initializing power state. ";
     power_control::logStateTransition(power_control::powerState);
 
