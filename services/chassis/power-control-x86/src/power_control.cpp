@@ -295,6 +295,20 @@ static void sendPowerControlEvent(const Event event)
     handler(event);
 }
 
+static uint64_t getCurrentTimeMs()
+{
+    struct timespec time = {};
+
+    if (clock_gettime(CLOCK_REALTIME, &time) < 0)
+    {
+        return 0;
+    }
+    uint64_t currentTimeMs = static_cast<uint64_t>(time.tv_sec) * 1000;
+    currentTimeMs += static_cast<uint64_t>(time.tv_nsec) / 1000 / 1000;
+
+    return currentTimeMs;
+}
+
 static constexpr std::string_view getHostState(const PowerState state)
 {
     switch (state)
@@ -351,6 +365,7 @@ static void setPowerState(const PowerState state)
 
     chassisIface->set_property("CurrentPowerState",
                                std::string(getChassisState(powerState)));
+    chassisIface->set_property("LastStateChangeTime", getCurrentTimeMs());
 }
 
 enum class RestartCause
@@ -1690,6 +1705,8 @@ int main(int argc, char* argv[])
     power_control::chassisIface->register_property(
         "CurrentPowerState",
         std::string(power_control::getChassisState(power_control::powerState)));
+    power_control::chassisIface->register_property(
+        "LastStateChangeTime", power_control::getCurrentTimeMs());
 
     power_control::chassisIface->initialize();
 
