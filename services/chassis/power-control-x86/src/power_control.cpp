@@ -1174,6 +1174,9 @@ static void powerStateOff(const Event event)
         case Event::psPowerOKAssert:
             setPowerState(PowerState::waitForSIOPowerGood);
             break;
+        case Event::sioS5DeAssert:
+            setPowerState(PowerState::waitForPSPowerOK);
+            break;
         case Event::powerButtonPressed:
             psPowerOKWatchdogTimerStart();
             setPowerState(PowerState::waitForPSPowerOK);
