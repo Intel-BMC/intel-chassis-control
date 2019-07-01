@@ -51,9 +51,10 @@ const static constexpr int sioPowerGoodWatchdogTimeMs = 1000;
 const static constexpr int psPowerOKWatchdogTimeMs = 8000;
 const static constexpr int gracefulPowerOffTimeMs = 60000;
 const static constexpr int buttonMaskTimeMs = 60000;
+const static constexpr int powerOffSaveTimeMs = 7000;
 
 const static std::filesystem::path powerControlDir = "/var/lib/power-control";
-const static constexpr std::string_view powerDropFile = "power-drop";
+const static constexpr std::string_view powerStateFile = "power-state";
 
 // Timers
 // Time holding GPIOs asserted
@@ -66,6 +67,8 @@ static boost::asio::steady_timer gracefulPowerOffTimer(io);
 static boost::asio::steady_timer psPowerOKWatchdogTimer(io);
 // Time SIO power good assertion on power-on
 static boost::asio::steady_timer sioPowerGoodWatchdogTimer(io);
+// Time power-off state save for power loss tracking
+static boost::asio::steady_timer powerStateSaveTimer(io);
 
 // GPIO Lines and Event Descriptors
 static gpiod::line psPowerOKLine;
@@ -355,6 +358,26 @@ static constexpr std::string_view getChassisState(const PowerState state)
             break;
     }
 };
+static void savePowerState(const PowerState state)
+{
+    powerStateSaveTimer.expires_after(
+        std::chrono::milliseconds(powerOffSaveTimeMs));
+    powerStateSaveTimer.async_wait([state](const boost::system::error_code ec) {
+        if (ec)
+        {
+            // operation_aborted is expected if timer is canceled before
+            // completion.
+            if (ec != boost::asio::error::operation_aborted)
+            {
+                std::cerr << "Power-state save async_wait failed: "
+                          << ec.message() << "\n";
+            }
+            return;
+        }
+        std::ofstream powerStateStream(powerControlDir / powerStateFile);
+        powerStateStream << getChassisState(state);
+    });
+}
 static void setPowerState(const PowerState state)
 {
     powerState = state;
@@ -366,6 +389,9 @@ static void setPowerState(const PowerState state)
     chassisIface->set_property("CurrentPowerState",
                                std::string(getChassisState(powerState)));
     chassisIface->set_property("LastStateChangeTime", getCurrentTimeMs());
+
+    // Save the power state for the restore policy
+    savePowerState(state);
 }
 
 enum class RestartCause
@@ -409,8 +435,7 @@ static std::string getRestartCause(RestartCause cause)
 static void setRestartCause(const RestartCause cause)
 {
     conn->async_method_call(
-        [](boost::system::error_code ec,
-           const std::variant<std::string>& policyProperty) {
+        [](boost::system::error_code ec) {
             if (ec)
             {
                 std::cerr << "failed to set RestartCause\n";
@@ -451,55 +476,40 @@ static void nmiButtonPressLog()
                     "OpenBMC.0.1.NMIButtonPressed", NULL);
 }
 
-static int initializePowerDropStorage()
+static int initializePowerStateStorage()
 {
     // create the power control directory if it doesn't exist
     std::error_code ec;
-    if (!(std::filesystem::create_directories(power_control::powerControlDir,
-                                              ec)))
+    if (!(std::filesystem::create_directories(powerControlDir, ec)))
     {
         if (ec.value() != 0)
         {
-            std::cerr << "failed to create " << power_control::powerControlDir
-                      << ": " << ec.message() << "\n";
+            std::cerr << "failed to create " << powerControlDir << ": "
+                      << ec.message() << "\n";
             return -1;
         }
     }
-    // Create the power drop file if it doesn't exist
-    if (!std::filesystem::exists(power_control::powerControlDir /
-                                 power_control::powerDropFile))
+    // Create the power state file if it doesn't exist
+    if (!std::filesystem::exists(powerControlDir / powerStateFile))
     {
-        std::ofstream powerDrop(power_control::powerControlDir /
-                                power_control::powerDropFile);
-        powerDrop << "No";
+        std::ofstream powerStateStream(powerControlDir / powerStateFile);
+        powerStateStream << getChassisState(powerState);
     }
     return 0;
 }
 
-static void storePowerDrop()
-{
-    std::ofstream powerDropStream(powerControlDir / powerDropFile);
-    powerDropStream << "Yes";
-}
-
-static void clearPowerDrop()
-{
-    std::ofstream powerDropStream(powerControlDir / powerDropFile);
-    powerDropStream << "No";
-}
-
 static bool wasPowerDropped()
 {
-    std::ifstream powerDropStream(powerControlDir / powerDropFile);
-    if (!powerDropStream.is_open())
+    std::ifstream powerStateStream(powerControlDir / powerStateFile);
+    if (!powerStateStream.is_open())
     {
-        std::cerr << "Failed to open power drop file\n";
+        std::cerr << "Failed to open power state file\n";
         return false;
     }
 
-    std::string drop;
-    std::getline(powerDropStream, drop);
-    return drop == "Yes";
+    std::string state;
+    std::getline(powerStateStream, state);
+    return state == "xyz.openbmc_project.State.Chassis.PowerState.On";
 }
 
 static void invokePowerRestorePolicy(const std::string& policy)
@@ -1050,7 +1060,6 @@ static void powerStateOn(const Event event)
     switch (event)
     {
         case Event::psPowerOKDeAssert:
-            storePowerDrop();
             setPowerState(PowerState::off);
             break;
         case Event::sioS5Assert:
@@ -1163,16 +1172,13 @@ static void powerStateOff(const Event event)
     switch (event)
     {
         case Event::psPowerOKAssert:
-            clearPowerDrop();
             setPowerState(PowerState::waitForSIOPowerGood);
             break;
         case Event::powerButtonPressed:
-            clearPowerDrop();
             psPowerOKWatchdogTimerStart();
             setPowerState(PowerState::waitForPSPowerOK);
             break;
         case Event::powerOnRequest:
-            clearPowerDrop();
             psPowerOKWatchdogTimerStart();
             setPowerState(PowerState::waitForPSPowerOK);
             powerOn();
@@ -1521,12 +1527,6 @@ int main(int argc, char* argv[])
         "xyz.openbmc_project.State.OperatingSystem");
     power_control::conn->request_name("xyz.openbmc_project.Chassis.Buttons");
 
-    // Initialize the power drop storage
-    if (power_control::initializePowerDropStorage() < 0)
-    {
-        return -1;
-    }
-
     // Request PS_PWROK GPIO events
     if (!power_control::requestGPIOEvents(
             "PS_PWROK", power_control::psPowerOKHandler,
@@ -1605,6 +1605,12 @@ int main(int argc, char* argv[])
     if (power_control::psPowerOKLine.get_value() > 0)
     {
         power_control::powerState = power_control::PowerState::on;
+    }
+
+    // Initialize the power state storage
+    if (power_control::initializePowerStateStorage() < 0)
+    {
+        return -1;
     }
 
     // Check if we need to start the Power Restore policy
