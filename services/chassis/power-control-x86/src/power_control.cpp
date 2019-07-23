@@ -69,6 +69,8 @@ static boost::asio::steady_timer psPowerOKWatchdogTimer(io);
 static boost::asio::steady_timer sioPowerGoodWatchdogTimer(io);
 // Time power-off state save for power loss tracking
 static boost::asio::steady_timer powerStateSaveTimer(io);
+// POH timer
+static boost::asio::steady_timer pohCounterTimer(io);
 
 // GPIO Lines and Event Descriptors
 static gpiod::line psPowerOKLine;
@@ -1050,6 +1052,107 @@ static void psPowerOKWatchdogTimerStart()
         });
 }
 
+static void pohCounterTimerStart()
+{
+    std::cerr << "POH timer started\n";
+    // Set the time-out as 1 hour, to align with POH command in ipmid
+    pohCounterTimer.expires_after(std::chrono::hours(1));
+    pohCounterTimer.async_wait([](const boost::system::error_code& ec) {
+        if (ec)
+        {
+            // operation_aborted is expected if timer is canceled before
+            // completion.
+            if (ec != boost::asio::error::operation_aborted)
+            {
+                std::cerr << "POH timer async_wait failed: " << ec.message()
+                          << "\n";
+            }
+            std::cerr << "POH timer canceled\n";
+            return;
+        }
+
+        if (getHostState(powerState) !=
+            "xyz.openbmc_project.State.Host.HostState.Running")
+        {
+            return;
+        }
+
+        conn->async_method_call(
+            [](boost::system::error_code ec,
+               const std::variant<uint32_t>& pohCounterProperty) {
+                if (ec)
+                {
+                    std::cerr << "error to get poh counter\n";
+                    return;
+                }
+                const uint32_t* pohCounter =
+                    std::get_if<uint32_t>(&pohCounterProperty);
+                if (pohCounter == nullptr)
+                {
+                    std::cerr << "unable to read poh counter\n";
+                    return;
+                }
+
+                conn->async_method_call(
+                    [](boost::system::error_code ec) {
+                        if (ec)
+                        {
+                            std::cerr << "failed to set poh counter\n";
+                        }
+                    },
+                    "xyz.openbmc_project.Settings",
+                    "/xyz/openbmc_project/state/chassis0",
+                    "org.freedesktop.DBus.Properties", "Set",
+                    "xyz.openbmc_project.State.PowerOnHours", "POHCounter",
+                    std::variant<uint32_t>(*pohCounter + 1));
+            },
+            "xyz.openbmc_project.Settings",
+            "/xyz/openbmc_project/state/chassis0",
+            "org.freedesktop.DBus.Properties", "Get",
+            "xyz.openbmc_project.State.PowerOnHours", "POHCounter");
+
+        pohCounterTimerStart();
+    });
+}
+
+static void currentHostStateMonitor()
+{
+    static auto match = sdbusplus::bus::match::match(
+        *conn,
+        "type='signal',member='PropertiesChanged', "
+        "interface='org.freedesktop.DBus.Properties', "
+        "arg0namespace='xyz.openbmc_project.State.Host'",
+        [](sdbusplus::message::message& message) {
+            std::string intfName;
+            std::map<std::string, std::variant<std::string>> properties;
+
+            message.read(intfName, properties);
+
+            std::variant<std::string> currentHostState;
+
+            try
+            {
+                currentHostState = properties.at("CurrentHostState");
+            }
+            catch (const std::out_of_range& e)
+            {
+                std::cerr << "Error in finding CurrentHostState property\n";
+
+                return;
+            }
+
+            if (std::get<std::string>(currentHostState) ==
+                "xyz.openbmc_project.State.Host.HostState.Running")
+            {
+                pohCounterTimerStart();
+            }
+            else
+            {
+                pohCounterTimer.cancel();
+            }
+        });
+}
+
 static void sioPowerGoodWatchdogTimerStart()
 {
     std::cerr << "SIO power good watchdog timer started\n";
@@ -1686,6 +1789,8 @@ int main(int argc, char* argv[])
     power_control::hostIface->register_property(
         "CurrentHostState",
         std::string(power_control::getHostState(power_control::powerState)));
+
+    power_control::currentHostStateMonitor();
 
     power_control::hostIface->initialize();
 
