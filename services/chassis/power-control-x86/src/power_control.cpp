@@ -90,6 +90,26 @@ static boost::asio::posix::stream_descriptor idButtonEvent(io);
 static gpiod::line postCompleteLine;
 static boost::asio::posix::stream_descriptor postCompleteEvent(io);
 
+static constexpr uint8_t beepPowerFail = 8;
+
+static void beep(const uint8_t& beepPriority)
+{
+    std::cerr << "Beep with priority: " << (unsigned)beepPriority << "\n";
+
+    conn->async_method_call(
+        [](boost::system::error_code ec) {
+            if (ec)
+            {
+                std::cerr << "beep returned error with "
+                             "async_method_call (ec = "
+                          << ec << ")\n";
+                return;
+            }
+        },
+        "xyz.openbmc_project.BeepCode", "/xyz/openbmc_project/BeepCode",
+        "xyz.openbmc_project.BeepCode", "beep", uint8_t(beepPriority));
+}
+
 enum class PowerState
 {
     on,
@@ -1061,6 +1081,8 @@ static void powerStateOn(const Event event)
     {
         case Event::psPowerOKDeAssert:
             setPowerState(PowerState::off);
+            // DC power is unexpectedly lost, beep
+            beep(beepPowerFail);
             break;
         case Event::sioS5Assert:
             setPowerState(PowerState::transitionToOff);
