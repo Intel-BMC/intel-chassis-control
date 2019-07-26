@@ -42,6 +42,7 @@ static std::shared_ptr<sdbusplus::asio::dbus_interface> idButtonIface;
 static gpiod::line powerButtonMask;
 static gpiod::line resetButtonMask;
 static bool nmiButtonMasked = false;
+static bool resetInProgress = false;
 
 const static constexpr int powerPulseTimeMs = 200;
 const static constexpr int forceOffPulseTimeMs = 15000;
@@ -1536,6 +1537,7 @@ static void resetButtonHandler()
         resetButtonIface->set_property("ButtonPressed", true);
         if (!resetButtonMask)
         {
+            resetInProgress = true;
             setRestartCause(RestartCause::resetButton);
         }
         else
@@ -1623,10 +1625,17 @@ static void postCompleteHandler()
     if (postComplete)
     {
         osIface->set_property("OperatingSystemState", std::string("Standby"));
+        resetInProgress = false;
     }
     else
     {
         osIface->set_property("OperatingSystemState", std::string("Inactive"));
+        // Set the restart cause if POST complete de-asserted by host software
+        if (powerState == PowerState::on && !resetInProgress)
+        {
+            resetInProgress = true;
+            setRestartCause(RestartCause::softReset);
+        }
     }
     postCompleteEvent.async_wait(
         boost::asio::posix::stream_descriptor::wait_read,
