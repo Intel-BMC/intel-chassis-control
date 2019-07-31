@@ -473,9 +473,9 @@ static void setRestartCause(const RestartCause cause)
 
 static void powerRestorePolicyLog()
 {
-    sd_journal_send("MESSAGE=PowerControl: power restore policy started",
+    sd_journal_send("MESSAGE=PowerControl: power restore policy applied",
                     "PRIORITY=%i", LOG_INFO, "REDFISH_MESSAGE_ID=%s",
-                    "OpenBMC.0.1.PowerRestorePolicyStarted", NULL);
+                    "OpenBMC.0.1.PowerRestorePolicyApplied", NULL);
 }
 
 static void powerButtonPressLog()
