@@ -57,6 +57,9 @@ const static constexpr int powerOffSaveTimeMs = 7000;
 const static std::filesystem::path powerControlDir = "/var/lib/power-control";
 const static constexpr std::string_view powerStateFile = "power-state";
 
+static bool nmiEnabled = true;
+static constexpr const char* nmiOutName = "NMI_OUT";
+
 // Timers
 // Time holding GPIOs asserted
 static boost::asio::steady_timer gpioAssertTimer(io);
@@ -92,6 +95,7 @@ static gpiod::line idButtonLine;
 static boost::asio::posix::stream_descriptor idButtonEvent(io);
 static gpiod::line postCompleteLine;
 static boost::asio::posix::stream_descriptor postCompleteEvent(io);
+static gpiod::line nmiOutLine;
 
 static constexpr uint8_t beepPowerFail = 8;
 
@@ -497,6 +501,13 @@ static void nmiButtonPressLog()
     sd_journal_send("MESSAGE=PowerControl: NMI button pressed", "PRIORITY=%i",
                     LOG_INFO, "REDFISH_MESSAGE_ID=%s",
                     "OpenBMC.0.1.NMIButtonPressed", NULL);
+}
+
+static void nmiDiagIntLog()
+{
+    sd_journal_send("MESSAGE=PowerControl: NMI Diagnostic Interrupt",
+                    "PRIORITY=%i", LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                    "OpenBMC.0.1.NMIDiagnosticInterrupt", NULL);
 }
 
 static int initializePowerStateStorage()
@@ -1562,6 +1573,111 @@ static void resetButtonHandler()
         });
 }
 
+static void nmiSetEnablePorperty(bool value)
+{
+    conn->async_method_call(
+        [](boost::system::error_code ec) {
+            if (ec)
+            {
+                std::cerr << "failed to set NMI source\n";
+            }
+        },
+        "xyz.openbmc_project.Settings", "/com/intel/control/NMISource",
+        "org.freedesktop.DBus.Properties", "Set", "com.intel.Control.NMISource",
+        "Enabled", std::variant<bool>{value});
+}
+
+static void nmiReset(void)
+{
+    static constexpr const uint8_t value = 1;
+    const static constexpr int nmiOutPulseTimeMs = 200;
+
+    std::cerr << "NMI out action \n";
+    nmiOutLine.set_value(value);
+    std::cerr << nmiOutName << " set to " << std::to_string(value) << "\n";
+    gpioAssertTimer.expires_after(std::chrono::milliseconds(nmiOutPulseTimeMs));
+    gpioAssertTimer.async_wait([](const boost::system::error_code ec) {
+        // restore the NMI_OUT GPIO line back to the opposite value
+        nmiOutLine.set_value(!value);
+        std::cerr << nmiOutName << " released\n";
+        if (ec)
+        {
+            // operation_aborted is expected if timer is canceled before
+            // completion.
+            if (ec != boost::asio::error::operation_aborted)
+            {
+                std::cerr << nmiOutName << " async_wait failed: " + ec.message()
+                          << "\n";
+            }
+        }
+    });
+    // log to redfish
+    nmiDiagIntLog();
+    std::cerr << "NMI out action completed\n";
+    // reset Enable Property
+    nmiSetEnablePorperty(false);
+}
+
+static void nmiSourcePropertyMonitor(void)
+{
+    std::cerr << " NMI Source Property Monitor \n";
+
+    static std::unique_ptr<sdbusplus::bus::match::match> nmiSourceMatch =
+        std::make_unique<sdbusplus::bus::match::match>(
+            *conn,
+            "type='signal',interface='org.freedesktop.DBus.Properties',"
+            "member='PropertiesChanged',arg0namespace='com.intel.Control."
+            "NMISource'",
+            [](sdbusplus::message::message& msg) {
+                std::string interfaceName;
+                boost::container::flat_map<std::string,
+                                           std::variant<bool, std::string>>
+                    propertiesChanged;
+                std::string state;
+                bool value = true;
+                try
+                {
+                    msg.read(interfaceName, propertiesChanged);
+                    if (propertiesChanged.begin()->first == "Enabled")
+                    {
+                        value =
+                            std::get<bool>(propertiesChanged.begin()->second);
+                        std::cerr
+                            << " NMI Enabled propertiesChanged value: " << value
+                            << "\n";
+                        nmiEnabled = value;
+                        if (nmiEnabled)
+                        {
+                            nmiReset();
+                        }
+                    }
+                }
+                catch (std::exception& e)
+                {
+                    std::cerr << "Unable to read NMI source\n";
+                    return;
+                }
+            });
+}
+
+static void setNmiSource()
+{
+    conn->async_method_call(
+        [](boost::system::error_code ec) {
+            if (ec)
+            {
+                std::cerr << "failed to set NMI source\n";
+            }
+        },
+        "xyz.openbmc_project.Settings", "/com/intel/control/NMISource",
+        "org.freedesktop.DBus.Properties", "Set", "com.intel.Control.NMISource",
+        "BMCSource",
+        std::variant<std::string>{
+            "com.intel.Control.NMISource.BMCSourceSignal.FpBtn"});
+    // set Enable Property
+    nmiSetEnablePorperty(true);
+}
+
 static void nmiButtonHandler()
 {
     gpiod::line_event gpioLineEvent = nmiButtonLine.event_read();
@@ -1573,6 +1689,10 @@ static void nmiButtonHandler()
         if (nmiButtonMasked)
         {
             std::cerr << "NMI button press masked\n";
+        }
+        else
+        {
+            setNmiSource();
         }
     }
     else if (gpioLineEvent.event_type == gpiod::line_event::RISING_EDGE)
@@ -1736,6 +1856,13 @@ int main(int argc, char* argv[])
         return -1;
     }
 
+    // initialize NMI_OUT GPIO.
+    if (!power_control::setGPIOOutput(power_control::nmiOutName, 0,
+                                      power_control::nmiOutLine))
+    {
+        return -1;
+    }
+
     // Initialize the power state
     power_control::powerState = power_control::PowerState::off;
     // Check power good
@@ -1752,6 +1879,8 @@ int main(int argc, char* argv[])
 
     // Check if we need to start the Power Restore policy
     power_control::powerRestorePolicyCheck();
+
+    power_control::nmiSourcePropertyMonitor();
 
     std::cerr << "Initializing power state. ";
     power_control::logStateTransition(power_control::powerState);
