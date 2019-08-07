@@ -110,7 +110,7 @@ static void beep(const uint8_t& beepPriority)
             }
         },
         "xyz.openbmc_project.BeepCode", "/xyz/openbmc_project/BeepCode",
-        "xyz.openbmc_project.BeepCode", "beep", uint8_t(beepPriority));
+        "xyz.openbmc_project.BeepCode", "Beep", uint8_t(beepPriority));
 }
 
 enum class PowerState
