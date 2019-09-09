@@ -1688,9 +1688,6 @@ static void nmiSetEnablePorperty(bool value)
 
 static void nmiReset(void)
 {
-    std::cerr << "NMI out unavailable\n";
-    return;
-
     static constexpr const uint8_t value = 1;
     const static constexpr int nmiOutPulseTimeMs = 200;
 
@@ -1954,14 +1951,11 @@ int main(int argc, char* argv[])
     }
 
     // initialize NMI_OUT GPIO.
-    // FIXME: After upgrading to the latest kernel, pinctrl no longer allows
-    // requesting NMI_OUT, so disabling for now to fix the build and will need
-    // to be fixed and enabled again later
-    // if (!power_control::setGPIOOutput(power_control::nmiOutName, 0,
-    //                                   power_control::nmiOutLine))
-    // {
-    //     return -1;
-    // }
+    if (!power_control::setGPIOOutput(power_control::nmiOutName, 0,
+                                      power_control::nmiOutLine))
+    {
+        return -1;
+    }
 
     // Initialize the power state
     power_control::powerState = power_control::PowerState::off;
