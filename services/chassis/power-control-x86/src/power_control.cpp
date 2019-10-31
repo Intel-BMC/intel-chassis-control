@@ -1734,9 +1734,11 @@ static void nmiSetEnablePorperty(bool value)
                 std::cerr << "failed to set NMI source\n";
             }
         },
-        "xyz.openbmc_project.Settings", "/com/intel/control/NMISource",
-        "org.freedesktop.DBus.Properties", "Set", "com.intel.Control.NMISource",
-        "Enabled", std::variant<bool>{value});
+        "xyz.openbmc_project.Settings",
+        "/xyz/openbmc_project/Chassis/Control/NMISource",
+        "org.freedesktop.DBus.Properties", "Set",
+        "xyz.openbmc_project.Chassis.Control.NMISource", "Enabled",
+        std::variant<bool>{value});
 }
 
 static void nmiReset(void)
@@ -1778,7 +1780,8 @@ static void nmiSourcePropertyMonitor(void)
         std::make_unique<sdbusplus::bus::match::match>(
             *conn,
             "type='signal',interface='org.freedesktop.DBus.Properties',"
-            "member='PropertiesChanged',arg0namespace='com.intel.Control."
+            "member='PropertiesChanged',arg0namespace='xyz.openbmc_project."
+            "Chassis.Control."
             "NMISource'",
             [](sdbusplus::message::message& msg) {
                 std::string interfaceName;
@@ -1821,11 +1824,12 @@ static void setNmiSource()
                 std::cerr << "failed to set NMI source\n";
             }
         },
-        "xyz.openbmc_project.Settings", "/com/intel/control/NMISource",
-        "org.freedesktop.DBus.Properties", "Set", "com.intel.Control.NMISource",
-        "BMCSource",
-        std::variant<std::string>{
-            "com.intel.Control.NMISource.BMCSourceSignal.FpBtn"});
+        "xyz.openbmc_project.Settings",
+        "/xyz/openbmc_project/Chassis/Control/NMISource",
+        "org.freedesktop.DBus.Properties", "Set",
+        "xyz.openbmc_project.Chassis.Control.NMISource", "BMCSource",
+        std::variant<std::string>{"xyz.openbmc_project.Chassis.Control."
+                                  "NMISource.BMCSourceSignal.FpBtn"});
     // set Enable Property
     nmiSetEnablePorperty(true);
 }
